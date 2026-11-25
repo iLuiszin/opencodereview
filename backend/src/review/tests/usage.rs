@@ -2244,9 +2244,13 @@ fn validate_retained_real_chunk_report() {
 fn chunk_worker_count_is_bounded_independently_of_total_chunks() {
     let mut inputs = review_inputs("deep", 20, 5);
     inputs.review_parallel_chunks = 20;
-    assert_eq!(super::chunk_worker_count(&inputs, 95), 6);
+    assert_eq!(super::chunk_worker_count(&inputs, 95), 20);
     assert_eq!(super::chunk_worker_count(&inputs, 1), 1);
     assert_eq!(super::chunk_worker_count(&inputs, 0), 0);
+    inputs.review_parallel_chunks = 12;
+    assert_eq!(super::chunk_worker_count(&inputs, 95), 12);
+    inputs.review_parallel_chunks = 64;
+    assert_eq!(super::chunk_worker_count(&inputs, 95), 20);
     inputs.review_parallel_chunks = 2;
     assert_eq!(super::chunk_worker_count(&inputs, 95), 2);
     inputs.review_parallel_chunks = 0;
