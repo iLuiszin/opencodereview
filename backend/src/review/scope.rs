@@ -86,12 +86,7 @@ pub(crate) fn first_parent_count(repo: &Path, base: &str, head: &str, cancel: &A
 
 fn first_parent_chain(repo: &Path, base: &str, head: &str, cancel: &AtomicBool) -> Result<Vec<String>, String> {
     let range = format!("{base}..{head}");
-    let output = crate::review::git_capture(
-        repo,
-        &["rev-list", "--first-parent", "--reverse", &range],
-        cancel,
-        60,
-    )?;
+    let output = crate::review::git_capture(repo, &["rev-list", "--first-parent", "--reverse", &range], cancel, 60)?;
     Ok(String::from_utf8(output)
         .map_err(|error| error.to_string())?
         .lines()
@@ -111,9 +106,10 @@ fn cherry_equivalent_commits(
     let output = String::from_utf8(output).map_err(|error| error.to_string())?;
     Ok(output
         .lines()
-        .filter_map(|line| line.split_once(' '))
-        .filter(|line| line.0 == "-")
-        .map(|line| line.1.to_string())
+        .filter_map(|line| {
+            let (sign, sha) = line.split_once(' ')?;
+            (sign == "-").then(|| sha.to_string())
+        })
         .collect())
 }
 
@@ -135,7 +131,11 @@ pub(crate) fn reviewed_prefix(
 ) -> Result<Option<ReviewedPrefix>, String> {
     crate::review::check_cancel(cancel)?;
     let mut upstreams = Vec::new();
-    for branch in branches.iter().map(|branch| branch.trim()).filter(|branch| !branch.is_empty()) {
+    for branch in branches
+        .iter()
+        .map(|branch| branch.trim())
+        .filter(|branch| !branch.is_empty())
+    {
         crate::review::fetch_base(repo, branch, cancel)?;
         upstreams.push((branch.to_string(), crate::review::remote_base(branch)));
     }
@@ -150,6 +150,7 @@ pub(crate) fn reviewed_prefix(
     for (branch, upstream) in &upstreams {
         cherry.push((
             branch.clone(),
+            upstream.clone(),
             cherry_equivalent_commits(repo, upstream, base, head, cancel)?,
         ));
     }
@@ -163,8 +164,10 @@ pub(crate) fn reviewed_prefix(
         } else {
             cherry
                 .iter()
-                .find(|(_, equivalent)| equivalent.contains(sha))
-                .map(|(branch, _)| branch.clone())
+                .find(|(_, upstream, equivalent)| {
+                    crate::review::is_ancestor(repo, sha, upstream, cancel) || equivalent.contains(sha)
+                })
+                .map(|(branch, _, _)| branch.clone())
         };
         let Some(branch) = branch else {
             break;
@@ -199,7 +202,9 @@ pub(crate) fn reviewed_prefix_or_full(
 }
 
 pub(crate) fn reviewed_prefix_note(prefix: &ReviewedPrefix, base: &str, head: &str, commits: usize) -> String {
-    let short = |sha: &str| sha.get(..8).unwrap_or(sha);
+    fn short(sha: &str) -> &str {
+        sha.get(..8).unwrap_or(sha)
+    }
     format!(
         "Reviewed `{}..{}` ({} commits); {} commits already on `{}` were skipped.",
         short(base),

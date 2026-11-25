@@ -8,7 +8,10 @@ const FINDINGS_DATA: &str = "<!-- ocr-result-data:v1 head=abc reviewed_head=abc 
 const SKIPPED_DATA: &str = "<!-- ocr-result-data:v1 head=abc reviewed_head=abc observation=skipped state=skipped reason=file-limit inherited_from=none reviewer=ocr-1-review-v1 skill=v1 -->";
 
 fn skipped_body(run: i64) -> String {
-    format!("{MARKER}\n{SKIPPED_DATA}\n{}\n\nvisible", status_publication_marker(run))
+    format!(
+        "{MARKER}\n{SKIPPED_DATA}\n{}\n\nvisible",
+        status_publication_marker(run)
+    )
 }
 
 fn clean_body(run: Option<i64>) -> String {

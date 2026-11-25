@@ -181,16 +181,14 @@ pub(crate) fn run_inner(
         &head_sha,
         cancel,
     )?;
-    let reviewed_count_base = reviewed_prefix.as_ref().map(|prefix| {
-        match historical_prior_head {
-            Some(prior)
-                if prior != prefix.base_sha
-                    && crate::review::is_ancestor(&inputs.repo_path, &prefix.base_sha, prior, cancel) =>
-            {
-                prior.to_string()
-            }
-            _ => prefix.base_sha.clone(),
+    let reviewed_count_base = reviewed_prefix.as_ref().map(|prefix| match historical_prior_head {
+        Some(prior)
+            if prior != prefix.base_sha
+                && crate::review::is_ancestor(&inputs.repo_path, &prefix.base_sha, prior, cancel) =>
+        {
+            prior.to_string()
         }
+        _ => prefix.base_sha.clone(),
     });
     let use_reviewed_prefix = match (&reviewed_prefix, &reviewed_count_base) {
         (Some(prefix), Some(base)) => base == &prefix.base_sha,
@@ -200,7 +198,9 @@ pub(crate) fn run_inner(
         (Some(prefix), Some(base)) => {
             let commits = crate::review::scope::first_parent_count(&inputs.repo_path, base, &head_sha, cancel)
                 .unwrap_or(prefix.reviewed_commits);
-            Some(crate::review::scope::reviewed_prefix_note(prefix, base, &head_sha, commits))
+            Some(crate::review::scope::reviewed_prefix_note(
+                prefix, base, &head_sha, commits,
+            ))
         }
         _ => None,
     };
@@ -304,11 +304,9 @@ pub(crate) fn run_inner(
             .and_then(|resolution| resolution.review_base.clone())
             .or_else(|| prior_reviewed_head.map(str::to_string))
     };
-    if use_reviewed_prefix {
-        if let Some(prefix) = &reviewed_prefix {
-            reviewed_since = Some(prefix.base_sha.clone());
-            scope_reuse = None;
-        }
+    if let Some(prefix) = reviewed_prefix.as_ref().filter(|_| use_reviewed_prefix) {
+        reviewed_since = Some(prefix.base_sha.clone());
+        scope_reuse = None;
     }
     let (mut changed, mut diff, mut scope) = if let Some(selected) = &scope_reuse {
         (

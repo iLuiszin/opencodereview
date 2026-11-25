@@ -162,21 +162,18 @@ fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhP
     .map(|scope| scope.head_sha);
     let count_base = match prior_head {
         Some(prior)
-            if prior != prefix.base_sha && crate::review::is_ancestor(&repo_path, &prefix.base_sha, &prior, &cancel) =>
+            if prior != prefix.base_sha
+                && crate::review::is_ancestor(&repo_path, &prefix.base_sha, &prior, &cancel) =>
         {
             prior
         }
         _ => prefix.base_sha,
     };
-    let count = crate::review::changed_file_targets_local(
-        &repo_path,
-        &format!("{count_base}..{head}"),
-        &cancel,
-    )
-    .ok()?
-    .iter()
-    .filter(|path| crate::review::counts_toward_file_limit(path))
-    .count() as i64;
+    let count = crate::review::changed_file_targets_local(&repo_path, &format!("{count_base}..{head}"), &cancel)
+        .ok()?
+        .iter()
+        .filter(|path| crate::review::counts_toward_file_limit(path))
+        .count() as i64;
     Some(FileCount {
         count,
         reviewable: true,
@@ -371,23 +368,15 @@ pub(crate) fn poll_one_pr(
             Ok(())
         }
     });
-    if computed_lane == "size_skipped" && matched_keyword.is_none() {
-        if let Some(detail) = &status_reason {
-            let full_name = format!("{}/{}", repo.owner, repo.name);
-            let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
-            let _ = with_db_raw(state, |db| {
-                publish_skipped_review_result(
-                    db,
-                    pr_id,
-                    None,
-                    &full_name,
-                    pr.number,
-                    &repo_path,
-                    "file-limit",
-                    detail,
-                )
-            });
-        }
+    if let Some(detail) = status_reason
+        .as_deref()
+        .filter(|_| computed_lane == "size_skipped" && matched_keyword.is_none())
+    {
+        let full_name = format!("{}/{}", repo.owner, repo.name);
+        let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
+        let _ = with_db_raw(state, |db| {
+            publish_skipped_review_result(db, pr_id, None, &full_name, pr.number, &repo_path, "file-limit", detail)
+        });
     }
     if allow_auto_start
         && settings.review_auto_enabled

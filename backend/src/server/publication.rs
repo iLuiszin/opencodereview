@@ -116,7 +116,9 @@ pub(crate) fn review_result_body(
     let key = crate::db::result_marker_key(full_name, number, installation_id);
     let run_marker = status_publication_marker(run_id);
     let inherited_from = prior_result_head_sha.unwrap_or("none");
-    let reason_field = skip_reason.map(|reason| format!(" reason={reason}")).unwrap_or_default();
+    let reason_field = skip_reason
+        .map(|reason| format!(" reason={reason}"))
+        .unwrap_or_default();
     let data = format!(
         "<!-- ocr-result-data:v1 head={observed_head_sha} reviewed_head={reviewed_head_sha} observation={observation} state={effective_state}{reason_field} inherited_from={inherited_from} reviewer={reviewer_version} skill={skill_version} -->"
     );
@@ -156,7 +158,8 @@ pub(crate) fn review_result_body(
 }
 
 pub(crate) fn reviewed_scope_note_in_body(body: Option<&str>) -> Option<&str> {
-    body?.lines()
+    body?
+        .lines()
         .find(|line| line.starts_with("Reviewed `") && line.contains(" commits already on "))
 }
 
@@ -650,7 +653,7 @@ pub(crate) fn publish_skipped_review_result(
     detail: &str,
 ) -> Result<(), String> {
     let result = reserve_skipped_review_result(db, pr_id, existing_run_id, full_name, number, reason, detail)?;
-    if result.publication_status == "pending" || result.publication_status == "failed" {
+    if matches!(result.publication_status.as_str(), "pending" | "failed") {
         publish_effective_review_result(db, &result, full_name, number, repo_path)?;
     }
     Ok(())

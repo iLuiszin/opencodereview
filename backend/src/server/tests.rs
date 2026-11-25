@@ -693,7 +693,11 @@ fn skipped_result_reservation_is_machine_readable_and_head_scoped() {
     )
     .unwrap();
     assert_ne!(third.run_id, first.run_id);
-    assert!(third.body.as_deref().unwrap().contains(&format!("reviewed_head={head_two}")));
+    assert!(third
+        .body
+        .as_deref()
+        .unwrap()
+        .contains(&format!("reviewed_head={head_two}")));
     drop(db);
     std::fs::remove_dir_all(root).unwrap();
 }

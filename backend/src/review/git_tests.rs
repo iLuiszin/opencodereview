@@ -183,20 +183,14 @@ fn commit_in_clone(clone: &Path, file: &str, text: &str, message: &str) -> Strin
 fn reviewed_prefix_skips_only_the_already_reviewed_prefix() {
     let (root, clone, base, reviewed) = reviewed_prefix_fixture("prefix");
     run(&clone, &["checkout", "-q", "--detach", &base]);
-    run(&clone, &["cherry-pick", "-q", &reviewed]);
-    run(&clone, &["cherry-pick", "-q", "origin/integration~0"]);
+    run(&clone, &["cherry-pick", &reviewed]);
+    run(&clone, &["cherry-pick", "origin/integration~0"]);
     let prefix_head = run(&clone, &["rev-parse", "HEAD"]);
     let head = commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
     let cancel = AtomicBool::new(false);
-    let prefix = crate::review::scope::reviewed_prefix(
-        &clone,
-        &["integration".to_string()],
-        &base,
-        &head,
-        &cancel,
-    )
-    .unwrap()
-    .unwrap();
+    let prefix = crate::review::scope::reviewed_prefix(&clone, &["integration".to_string()], &base, &head, &cancel)
+        .unwrap()
+        .unwrap();
     assert_eq!(prefix.base_sha, prefix_head);
     assert_eq!(prefix.skipped_commits, 2);
     assert_eq!(prefix.reviewed_commits, 1);
@@ -210,7 +204,7 @@ fn reviewed_prefix_stops_before_a_matching_commit_after_new_work() {
     let (root, clone, base, reviewed) = reviewed_prefix_fixture("gap");
     run(&clone, &["checkout", "-q", "--detach", &base]);
     commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
-    run(&clone, &["cherry-pick", "-q", &reviewed]);
+    run(&clone, &["cherry-pick", &reviewed]);
     let head = run(&clone, &["rev-parse", "HEAD"]);
     let prefix = crate::review::scope::reviewed_prefix(
         &clone,
@@ -235,14 +229,8 @@ fn reviewed_prefix_is_empty_without_setting_and_full_on_git_failure() {
         None
     );
     assert_eq!(
-        crate::review::scope::reviewed_prefix_or_full(
-            &clone,
-            &["missing-branch".to_string()],
-            &base,
-            &head,
-            &cancel,
-        )
-        .unwrap(),
+        crate::review::scope::reviewed_prefix_or_full(&clone, &["missing-branch".to_string()], &base, &head, &cancel,)
+            .unwrap(),
         None
     );
     let _ = fs::remove_dir_all(root);
