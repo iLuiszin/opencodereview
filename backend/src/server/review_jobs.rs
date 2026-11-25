@@ -52,6 +52,21 @@ pub(crate) fn start_review_job_with_intent(
         .is_some_and(|count| count > settings.review_max_files)
     {
         with_db_raw(state, |db| db.mark_pr_size_skipped(pr_id, settings.review_max_files))?;
+        let _ = with_db_raw(state, |db| {
+            let (repo_id, full_name, number, _) = db.pr_review_coords(pr_id)?;
+            let repo = db.repo_by_id(repo_id)?;
+            let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
+            publish_skipped_review_result(
+                db,
+                pr_id,
+                None,
+                &full_name,
+                number,
+                &repo_path,
+                "file-limit",
+                "review file limit exceeded before review start",
+            )
+        });
         return Ok(());
     }
     // The acknowledgement is best-effort: it must never block a review start.

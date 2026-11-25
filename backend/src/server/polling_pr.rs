@@ -371,6 +371,24 @@ pub(crate) fn poll_one_pr(
             Ok(())
         }
     });
+    if computed_lane == "size_skipped" && matched_keyword.is_none() {
+        if let Some(detail) = &status_reason {
+            let full_name = format!("{}/{}", repo.owner, repo.name);
+            let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
+            let _ = with_db_raw(state, |db| {
+                publish_skipped_review_result(
+                    db,
+                    pr_id,
+                    None,
+                    &full_name,
+                    pr.number,
+                    &repo_path,
+                    "file-limit",
+                    detail,
+                )
+            });
+        }
+    }
     if allow_auto_start
         && settings.review_auto_enabled
         && effective_lane == "open"

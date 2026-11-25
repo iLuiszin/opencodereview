@@ -620,6 +620,107 @@ fn request_changes_uses_body_only_finding_body() {
 }
 
 #[test]
+fn skipped_result_reservation_is_machine_readable_and_head_scoped() {
+    let root = std::env::temp_dir().join(format!(
+        "ocr-skipped-result-{}-{}",
+        std::process::id(),
+        crate::db::now_millis()
+    ));
+    let db = crate::db::Db::for_test_at(root.join("test.sqlite")).open().unwrap();
+    db.ensure_temp_repo_for_index(1, "acme/fixture").unwrap();
+    db.save_setting("review_result_mode", "result_comment").unwrap();
+    let head_one = "1".repeat(40);
+    let upsert = |head: &str| {
+        db.upsert_pull_request(&crate::db::PullRequestInput {
+            repo_id: 1,
+            number: 7,
+            title: "Large fixture".into(),
+            author: "fixture".into(),
+            author_avatar_url: None,
+            is_draft: false,
+            head_sha: head.into(),
+            base_sha: None,
+            base_ref: Some("main".into()),
+            head_ref: Some("feature".into()),
+            default_branch: Some("main".into()),
+            url: None,
+            lane: "size_skipped".into(),
+            status_reason: Some("Skipped: 301 reviewable changed files exceeds the 300-file review limit".into()),
+        })
+        .unwrap()
+    };
+    let pr_id = upsert(&head_one);
+    let first = reserve_skipped_review_result(
+        &db,
+        pr_id,
+        None,
+        "acme/fixture",
+        7,
+        "file-limit",
+        "Skipped: 301 reviewable changed files exceeds the 300-file review limit",
+    )
+    .unwrap();
+    let body = first.body.as_deref().unwrap();
+    assert!(body.contains("<!-- ocr-result-data:v1 "));
+    assert!(body.contains(&format!("head={head_one} reviewed_head={head_one}")));
+    assert!(body.contains("observation=skipped state=skipped reason=file-limit"));
+    assert!(body.contains("### ⏭️ OpenCodeReview skipped this pull request"));
+    assert!(body.contains("more files than the configured review limit"));
+
+    let second = reserve_skipped_review_result(
+        &db,
+        pr_id,
+        None,
+        "acme/fixture",
+        7,
+        "file-limit",
+        "Skipped: 301 reviewable changed files exceeds the 300-file review limit",
+    )
+    .unwrap();
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.run_id, first.run_id);
+
+    let head_two = "2".repeat(40);
+    upsert(&head_two);
+    let third = reserve_skipped_review_result(
+        &db,
+        pr_id,
+        None,
+        "acme/fixture",
+        7,
+        "file-limit",
+        "Skipped: 301 reviewable changed files exceeds the 300-file review limit",
+    )
+    .unwrap();
+    assert_ne!(third.run_id, first.run_id);
+    assert!(third.body.as_deref().unwrap().contains(&format!("reviewed_head={head_two}")));
+    drop(db);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn skipped_result_body_marks_all_excluded_files() {
+    let body = review_result_body(
+        "owner/repo",
+        7,
+        "installation",
+        42,
+        "abcdef123456",
+        "abcdef123456",
+        "skipped",
+        "skipped",
+        Some("all-excluded"),
+        None,
+        "0.1.0",
+        "v0",
+        None,
+        &[],
+    );
+    assert!(body.contains("observation=skipped state=skipped reason=all-excluded"));
+    assert!(body.contains("Every changed file is excluded from review evidence"));
+}
+
+#[test]
 fn result_comment_links_to_ocr_repository() {
     let clean = review_result_body(
         "owner/repo",
@@ -630,6 +731,7 @@ fn result_comment_links_to_ocr_repository() {
         "abcdef123456",
         "clean",
         "clean",
+        None,
         None,
         "0.1.0",
         "v0",
@@ -759,6 +861,7 @@ fn evidence_warning_publication_preserves_findings_and_recovery_markers() {
         "head",
         "clean",
         "clean",
+        None,
         None,
         "reviewer",
         "skill",

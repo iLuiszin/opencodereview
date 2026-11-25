@@ -5,6 +5,11 @@ const MARKER: &str = "<!-- ocr-result-key:v1 repo=owner/repo pr=7 installation=i
 const OTHER_MARKER: &str = "<!-- ocr-result-key:v1 repo=owner/repo pr=7 installation=inst-b -->";
 const CLEAN_DATA: &str = "<!-- ocr-result-data:v1 head=abc reviewed_head=abc observation=clean state=clean inherited_from=none reviewer=ocr-1-review-v1 skill=v1 -->";
 const FINDINGS_DATA: &str = "<!-- ocr-result-data:v1 head=abc reviewed_head=abc observation=findings state=findings_posted inherited_from=none reviewer=ocr-1-review-v1 skill=v1 -->";
+const SKIPPED_DATA: &str = "<!-- ocr-result-data:v1 head=abc reviewed_head=abc observation=skipped state=skipped reason=file-limit inherited_from=none reviewer=ocr-1-review-v1 skill=v1 -->";
+
+fn skipped_body(run: i64) -> String {
+    format!("{MARKER}\n{SKIPPED_DATA}\n{}\n\nvisible", status_publication_marker(run))
+}
 
 fn clean_body(run: Option<i64>) -> String {
     match run {
@@ -20,6 +25,19 @@ fn replace_posts_fresh_comment_when_none_exists() {
     assert_eq!(api.posts, 1);
     assert_eq!(id, 1);
     assert_eq!(api.comments.len(), 1);
+}
+
+#[test]
+fn replace_recognizes_a_skipped_result_and_leaves_one_comment_for_a_new_head() {
+    let mut api = FakeStatusComments::new();
+    let first = replace_clean_comment(&mut api, "owner/repo", 7, MARKER, 3, &skipped_body(3)).unwrap();
+    assert_eq!(api.posts, 1);
+    assert_eq!(api.ids(), vec![first]);
+
+    let second = replace_clean_comment(&mut api, "owner/repo", 7, MARKER, 4, &skipped_body(4)).unwrap();
+    assert_eq!(api.posts, 2);
+    assert_eq!(api.ids(), vec![second]);
+    assert_ne!(first, second);
 }
 
 #[test]

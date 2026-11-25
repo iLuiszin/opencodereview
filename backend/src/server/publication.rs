@@ -106,6 +106,7 @@ pub(crate) fn review_result_body(
     reviewed_head_sha: &str,
     observation: &str,
     effective_state: &str,
+    skip_reason: Option<&str>,
     prior_result_head_sha: Option<&str>,
     reviewer_version: &str,
     skill_version: &str,
@@ -115,11 +116,24 @@ pub(crate) fn review_result_body(
     let key = crate::db::result_marker_key(full_name, number, installation_id);
     let run_marker = status_publication_marker(run_id);
     let inherited_from = prior_result_head_sha.unwrap_or("none");
+    let reason_field = skip_reason.map(|reason| format!(" reason={reason}")).unwrap_or_default();
     let data = format!(
-        "<!-- ocr-result-data:v1 head={observed_head_sha} reviewed_head={reviewed_head_sha} observation={observation} state={effective_state} inherited_from={inherited_from} reviewer={reviewer_version} skill={skill_version} -->"
+        "<!-- ocr-result-data:v1 head={observed_head_sha} reviewed_head={reviewed_head_sha} observation={observation} state={effective_state}{reason_field} inherited_from={inherited_from} reviewer={reviewer_version} skill={skill_version} -->"
     );
     let commit_url = |sha: &str| format!("https://github.com/{full_name}/commit/{sha}");
     let visible = match (observation, effective_state) {
+        ("skipped", "skipped") => {
+            let reason = match skip_reason {
+                Some("file-limit") => "This pull request changes more files than the configured review limit.",
+                Some("all-excluded") => "Every changed file is excluded from review evidence.",
+                _ => "OpenCodeReview did not review this pull request.",
+            };
+            format!(
+                "### ⏭️ OpenCodeReview skipped this pull request\n\n{reason} Head: [`{}`]({}).",
+                short_sha(observed_head_sha),
+                commit_url(observed_head_sha)
+            )
+        }
         ("no_new_changes", "clean") => format!(
             "### ✅ No new issues\n\nOpenCodeReview checked [`{}`]({}) and found no new changes since the clean review of [`{}`]({}).",
             short_sha(observed_head_sha),
@@ -175,6 +189,7 @@ pub(crate) fn reserve_effective_review_result(
             reviewed_head_sha,
             observation,
             effective_state,
+            None,
             (observation == "no_new_changes")
                 .then(|| prior.map(|result| result.observed_head_sha.as_str()))
                 .flatten(),
@@ -316,6 +331,19 @@ pub(crate) fn verify_result_live_head(
     repo_path: &Path,
     stale_reason: &str,
 ) -> Result<(), String> {
+    if result.effective_state == "skipped" {
+        return match github::live_pr_state(full_name, number) {
+            Ok(live) if live.state == "OPEN" && live.head_sha == result.observed_head_sha => Ok(()),
+            Ok(_) => {
+                supersede_result_after_head_change(db, result, stale_reason);
+                Err(stale_reason.to_string())
+            }
+            Err(error) => {
+                record_review_result_failure(db, result, repo_id, &format!("Result comment failed: {error}"));
+                Err(error)
+            }
+        };
+    }
     match result
         .run_id
         .ok_or_else(|| {
@@ -546,6 +574,86 @@ pub(crate) fn mark_no_change_recovery_needed(db: &Database, inputs: &review::Rev
         "Manual review needed",
         &reason,
     );
+}
+
+/// Reserve and publish the machine-readable result for a head skipped before inference. Repolling
+/// the same head reuses the existing result row; a new head reserves a new generation, and the
+/// shared result-comment replacement path leaves exactly one visible comment.
+pub(crate) fn reserve_skipped_review_result(
+    db: &Database,
+    pr_id: i64,
+    existing_run_id: Option<i64>,
+    full_name: &str,
+    number: i64,
+    reason: &str,
+    detail: &str,
+) -> Result<ReviewResult, String> {
+    let (_, _, _, head_sha) = db.pr_review_coords(pr_id)?;
+    if let Some(existing) = db.review_result(pr_id)? {
+        if existing.observed_head_sha == head_sha && existing.effective_state == "skipped" {
+            return Ok(existing);
+        }
+    }
+    let run_id = match existing_run_id {
+        Some(run_id) => run_id,
+        None => db.record_skipped_review_run(pr_id, detail)?,
+    };
+    let installation_id = db.installation_id()?;
+    let reviewer_version = format!("ocr-{}-review-v1", env!("CARGO_PKG_VERSION"));
+    let skill_version = format!("v{}", db.active_skill_version_id());
+    let enabled = db.settings()?.review_result_mode == "result_comment";
+    let body = enabled.then(|| {
+        review_result_body(
+            full_name,
+            number,
+            &installation_id,
+            run_id,
+            &head_sha,
+            &head_sha,
+            "skipped",
+            "skipped",
+            Some(reason),
+            None,
+            &reviewer_version,
+            &skill_version,
+            None,
+            &[],
+        )
+    });
+    db.reserve_review_result(&ReviewResultInput {
+        pr_id,
+        run_id,
+        actionable_run_id: None,
+        observed_head_sha: &head_sha,
+        reviewed_head_sha: &head_sha,
+        prior_result_state: None,
+        prior_result_head_sha: None,
+        observation: "skipped",
+        effective_state: "skipped",
+        publication_status: if enabled { "pending" } else { "disabled" },
+        body: body.as_deref(),
+        github_review_id: None,
+        github_review_url: None,
+        reviewer_version: &reviewer_version,
+        skill_version: &skill_version,
+    })
+}
+
+pub(crate) fn publish_skipped_review_result(
+    db: &Database,
+    pr_id: i64,
+    existing_run_id: Option<i64>,
+    full_name: &str,
+    number: i64,
+    repo_path: &Path,
+    reason: &str,
+    detail: &str,
+) -> Result<(), String> {
+    let result = reserve_skipped_review_result(db, pr_id, existing_run_id, full_name, number, reason, detail)?;
+    if result.publication_status == "pending" || result.publication_status == "failed" {
+        publish_effective_review_result(db, &result, full_name, number, repo_path)?;
+    }
+    Ok(())
 }
 
 /// One line per finished review saying what automatic publication did with it, so a review that
@@ -876,9 +984,29 @@ pub(crate) fn run_review_job(
             }
             Err(error) if error.starts_with("review file limit exceeded:") => {
                 let _ = db.skip_review_run_for_file_limit(run_id, error);
+                let _ = publish_skipped_review_result(
+                    &db,
+                    pr_id,
+                    Some(run_id),
+                    &inputs.full_name,
+                    inputs.number,
+                    &inputs.repo_path,
+                    "file-limit",
+                    error,
+                );
             }
             Err(error) if error.starts_with(review::NOTHING_REVIEWABLE) => {
                 let _ = db.skip_review_run_without_reviewable_files(run_id, error);
+                let _ = publish_skipped_review_result(
+                    &db,
+                    pr_id,
+                    Some(run_id),
+                    &inputs.full_name,
+                    inputs.number,
+                    &inputs.repo_path,
+                    "all-excluded",
+                    error,
+                );
             }
             Err(error) if is_review_target_changed_error(error) => {
                 let _ = db.restore_review_intent(pr_id, inputs.force_full, inputs.reprocess);

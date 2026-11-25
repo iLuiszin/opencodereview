@@ -41,6 +41,21 @@ impl Database {
             .map_err(|error| error.to_string())
     }
 
+    /// Records an already-terminal skipped run for a head OpenCodeReview decided not to review
+    /// before inference was ever queued. Result publication needs a run generation.
+    pub fn record_skipped_review_run(&self, pr_id: i64, reason: &str) -> Result<i64, String> {
+        let now = now_millis();
+        self.conn
+            .query_row(
+                "INSERT INTO review_runs (pr_id, head_sha, status, error_message, outcome, started_at, finished_at, created_at, updated_at, review_scope_revision, owner_instance)
+                 VALUES ($1, (SELECT head_sha FROM pull_requests WHERE id = $1), 'skipped', $2, $2, $3, $3, $3, $3,
+                         (SELECT review_scope_revision FROM pull_requests WHERE id = $1), $4) RETURNING id",
+                params![pr_id, reason, now, self.db.instance_id()],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
     /// Records the engine a run is reviewing with, such as "Claude · Opus 5.5 · medium".
     pub(crate) fn set_review_run_model(&self, run_id: i64, model: &str) -> Result<(), String> {
         self.conn

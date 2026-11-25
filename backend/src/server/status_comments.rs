@@ -21,7 +21,9 @@ pub(crate) fn owned_clean_comment_run(body: &str, ownership_marker: &str) -> Opt
     let data = lines.next()?;
     if !data.starts_with("<!-- ocr-result-data:v1 ")
         || !data.ends_with(" -->")
-        || !data.split_whitespace().any(|field| field == "state=clean")
+        || !data
+            .split_whitespace()
+            .any(|field| field == "state=clean" || field == "state=skipped")
     {
         return None;
     }
