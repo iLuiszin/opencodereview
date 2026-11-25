@@ -82,6 +82,7 @@ pub(super) fn review_inputs(depth: &str, threshold: usize, chunk_size: usize) ->
         expected_scope: None,
         prior_scope: None,
         last_reviewed_sha: None,
+        review_reviewed_branches: Vec::new(),
         force_full: false,
         reprocess: false,
         skill_content: String::new(),

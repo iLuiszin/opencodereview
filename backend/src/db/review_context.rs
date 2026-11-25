@@ -165,6 +165,22 @@ impl Database {
     }
     }
 
+    pub fn last_reviewed_sha_for_number(&self, repo_id: i64, number: i64) -> Result<Option<String>, String> {
+        match self.conn.query_row(
+            "SELECT rr.head_sha FROM review_runs rr
+             JOIN pull_requests pr ON pr.id = rr.pr_id
+             WHERE pr.repo_id = $1 AND pr.number = $2 AND rr.review_body IS NOT NULL
+               AND COALESCE((SELECT json_member_array_length(a.audit_json, 'evidenceWarnings') FROM review_finding_audits a WHERE a.run_id=rr.id),0)=0
+             ORDER BY rr.id DESC LIMIT 1",
+            params![repo_id, number],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(sha) => Ok(Some(sha)),
+            Err(pg::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
     pub fn register_review_intent(
         &self,
         pr_id: i64,

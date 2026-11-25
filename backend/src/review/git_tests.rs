@@ -136,6 +136,118 @@ fn path_diffs_read_bracketed_names_literally() {
     assert!(!diff.contains("k.ts b/k.ts"), "{diff}");
 }
 
+fn reviewed_prefix_fixture(test: &str) -> (PathBuf, PathBuf, String, String) {
+    let root = std::env::temp_dir().join(format!(
+        "ocr-reviewed-prefix-{test}-{}-{}",
+        std::process::id(),
+        crate::db::now_millis()
+    ));
+    let (origin, clone) = (root.join("origin"), root.join("clone"));
+    fs::create_dir_all(&origin).unwrap();
+    run(&origin, &["init", "-q", "-b", "main"]);
+    run(&origin, &["config", "user.email", "test@example.invalid"]);
+    run(&origin, &["config", "user.name", "Test"]);
+    let commit = |repo: &Path, file: &str, text: &str, message: &str| {
+        fs::write(repo.join(file), text).unwrap();
+        run(repo, &["add", file]);
+        run(repo, &["commit", "-q", "-m", message]);
+        run(repo, &["rev-parse", "HEAD"])
+    };
+    fs::write(origin.join("base.txt"), "base\n").unwrap();
+    run(&origin, &["add", "."]);
+    run(&origin, &["commit", "-q", "-m", "base"]);
+    let base = run(&origin, &["rev-parse", "HEAD"]);
+    run(&origin, &["checkout", "-q", "-b", "integration"]);
+    let reviewed = commit(&origin, "reviewed-one.txt", "one\n", "reviewed one");
+    commit(&origin, "reviewed-two.txt", "two\n", "reviewed two");
+    run(&origin, &["checkout", "-q", "main"]);
+    let output = Command::new("git")
+        .args(["clone", "-q", &format!("file://{}", origin.display())])
+        .arg(&clone)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    run(&clone, &["config", "user.email", "test@example.invalid"]);
+    run(&clone, &["config", "user.name", "Test"]);
+    (root, clone, base, reviewed)
+}
+
+fn commit_in_clone(clone: &Path, file: &str, text: &str, message: &str) -> String {
+    fs::write(clone.join(file), text).unwrap();
+    run(clone, &["add", file]);
+    run(clone, &["commit", "-q", "-m", message]);
+    run(clone, &["rev-parse", "HEAD"])
+}
+
+#[test]
+fn reviewed_prefix_skips_only_the_already_reviewed_prefix() {
+    let (root, clone, base, reviewed) = reviewed_prefix_fixture("prefix");
+    run(&clone, &["checkout", "-q", "--detach", &base]);
+    run(&clone, &["cherry-pick", "-q", &reviewed]);
+    run(&clone, &["cherry-pick", "-q", "origin/integration~0"]);
+    let prefix_head = run(&clone, &["rev-parse", "HEAD"]);
+    let head = commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
+    let cancel = AtomicBool::new(false);
+    let prefix = crate::review::scope::reviewed_prefix(
+        &clone,
+        &["integration".to_string()],
+        &base,
+        &head,
+        &cancel,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(prefix.base_sha, prefix_head);
+    assert_eq!(prefix.skipped_commits, 2);
+    assert_eq!(prefix.reviewed_commits, 1);
+    let files = changed_file_targets_local(&clone, &format!("{}..{head}", prefix.base_sha), &cancel).unwrap();
+    assert_eq!(files, vec!["new.rs"]);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn reviewed_prefix_stops_before_a_matching_commit_after_new_work() {
+    let (root, clone, base, reviewed) = reviewed_prefix_fixture("gap");
+    run(&clone, &["checkout", "-q", "--detach", &base]);
+    commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
+    run(&clone, &["cherry-pick", "-q", &reviewed]);
+    let head = run(&clone, &["rev-parse", "HEAD"]);
+    let prefix = crate::review::scope::reviewed_prefix(
+        &clone,
+        &["integration".to_string()],
+        &base,
+        &head,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prefix, None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn reviewed_prefix_is_empty_without_setting_and_full_on_git_failure() {
+    let (root, clone, base, _) = reviewed_prefix_fixture("fallback");
+    run(&clone, &["checkout", "-q", "--detach", &base]);
+    let head = commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
+    let cancel = AtomicBool::new(false);
+    assert_eq!(
+        crate::review::scope::reviewed_prefix(&clone, &[], &base, &head, &cancel).unwrap(),
+        None
+    );
+    assert_eq!(
+        crate::review::scope::reviewed_prefix_or_full(
+            &clone,
+            &["missing-branch".to_string()],
+            &base,
+            &head,
+            &cancel,
+        )
+        .unwrap(),
+        None
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn blobs_of_deleted_bracketed_paths_are_absent() {
     let repo = std::env::temp_dir().join(format!(

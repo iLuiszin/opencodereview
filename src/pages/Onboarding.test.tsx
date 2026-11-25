@@ -67,6 +67,7 @@ const repo = (id: number, name: string, change: Partial<Repo> = {}): Repo => ({
   reviewMode: "manual",
   skipDraftPrs: true,
   skipSelfPrs: true,
+  reviewReviewedBranches: [],
   pollError: null,
   pollErrorUrl: null,
   pollErrorAt: null,

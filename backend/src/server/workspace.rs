@@ -29,6 +29,9 @@ pub(crate) fn subscribe_repo(
             payload.skip_draft_prs.unwrap_or(repo.skip_draft_prs),
             payload.skip_self_prs.unwrap_or(repo.skip_self_prs),
         )?;
+        if let Some(branches) = payload.review_reviewed_branches.as_deref() {
+            db.save_repo_reviewed_branches(repo_id, branches)?;
+        }
         db.repo_by_id(repo_id)
     })?;
     // Indexing clones the repository in the background, so saving a selection stays instant.

@@ -200,6 +200,7 @@ pub(crate) struct SubscribeRepoRequest {
     enabled: bool,
     skip_draft_prs: Option<bool>,
     skip_self_prs: Option<bool>,
+    review_reviewed_branches: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]

@@ -563,6 +563,7 @@ pub struct Repo {
     pub review_mode: String,
     pub skip_draft_prs: bool,
     pub skip_self_prs: bool,
+    pub review_reviewed_branches: Vec<String>,
     /// Last poll failure for this repo (e.g. SAML SSO not authorized for the org),
     /// with an optional actionable URL (the SSO authorize link). Cleared on success.
     pub poll_error: Option<String>,

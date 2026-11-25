@@ -122,6 +122,67 @@ pub(crate) fn file_count_for_limit(
     })
 }
 
+/// The review-limit count after removing the prefix already reviewed on the repository's
+/// reviewed branches. `None` means the ordinary GitHub file count policy applies unchanged.
+fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhPullRequest) -> Option<FileCount> {
+    if repo.review_reviewed_branches.is_empty() {
+        return None;
+    }
+    let cancel = AtomicBool::new(false);
+    let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
+    let head = crate::review::fetch_pr_head(&repo_path, pr.number, &cancel).ok()?;
+    if head != pr.head_ref_oid {
+        return None;
+    }
+    let base_ref = pr.base_ref_name.as_deref()?;
+    let base_rev = crate::review::resolve_base_rev(&repo_path, base_ref, &cancel).ok()?;
+    let current_scope = crate::review::scope::ReviewScope {
+        head_sha: head.clone(),
+        base_ref: base_ref.to_string(),
+        base_sha: base_rev.clone(),
+    };
+    let merge_base = crate::review::scope::merge_base(&repo_path, &base_rev, &head, &cancel).ok()?;
+    let prefix = crate::review::scope::reviewed_prefix_or_full(
+        &repo_path,
+        &repo.review_reviewed_branches,
+        &merge_base,
+        &head,
+        &cancel,
+    )
+    .ok()
+    .flatten()?;
+    let prior_head = with_db_read_raw(state, |db| {
+        let prior = db.pr_scope(repo.id, pr.number)?;
+        let last = db.last_reviewed_sha_for_number(repo.id, pr.number)?;
+        Ok::<_, String>(prior.filter(|scope| last.as_deref() == Some(scope.head_sha.as_str())))
+    })
+    .ok()
+    .flatten()
+    .filter(|prior| crate::review::scope::can_review_incrementally(&repo_path, prior, &current_scope, &cancel))
+    .map(|scope| scope.head_sha);
+    let count_base = match prior_head {
+        Some(prior)
+            if prior != prefix.base_sha && crate::review::is_ancestor(&repo_path, &prefix.base_sha, &prior, &cancel) =>
+        {
+            prior
+        }
+        _ => prefix.base_sha,
+    };
+    let count = crate::review::changed_file_targets_local(
+        &repo_path,
+        &format!("{count_base}..{head}"),
+        &cancel,
+    )
+    .ok()?
+    .iter()
+    .filter(|path| crate::review::counts_toward_file_limit(path))
+    .count() as i64;
+    Some(FileCount {
+        count,
+        reviewable: true,
+    })
+}
+
 pub(crate) fn poll_one_pr(
     state: &SharedState,
     repo: &Repo,
@@ -143,7 +204,8 @@ pub(crate) fn poll_one_pr(
             .as_deref()
             .is_some_and(|base| !base.is_empty() && base != default)
     });
-    let file_count = file_count_for_limit(state, repo, pr, settings.review_max_files, list_pr_files);
+    let file_count = reviewed_branch_file_count(state, repo, pr)
+        .or_else(|| file_count_for_limit(state, repo, pr, settings.review_max_files, list_pr_files));
     let too_many_files = file_count.is_some_and(|files| files.count > settings.review_max_files);
     let computed_lane = author_activation_lane(
         pr.is_draft && repo.skip_draft_prs,

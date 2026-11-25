@@ -123,6 +123,7 @@ export interface Repo {
   reviewMode: "manual" | "automatic";
   skipDraftPrs: boolean;
   skipSelfPrs: boolean;
+  reviewReviewedBranches: string[];
   pollError: string | null;
   pollErrorUrl: string | null;
   pollErrorAt: number | null;

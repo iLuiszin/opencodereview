@@ -178,6 +178,7 @@ pub(crate) fn review(
         expected_scope: None,
         prior_scope: None,
         last_reviewed_sha: None,
+        review_reviewed_branches: Vec::new(),
         force_full: true,
         reprocess: false,
         skill_content: database.active_skill_content(),

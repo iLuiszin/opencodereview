@@ -1,5 +1,9 @@
 use super::*;
 
+fn reviewed_branches(raw: String) -> Vec<String> {
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
 impl Database {
     pub fn ensure_temp_repo_for_index(&self, repo_id: i64, full_name: &str) -> Result<(), String> {
         let now = now_millis();
@@ -20,7 +24,8 @@ impl Database {
       "SELECT r.id, r.workspace_id, r.owner, r.name, r.full_name, r.description, r.is_private, r.default_branch,
               r.skill_path, r.skill_status, r.skill_checked_at, r.skill_error,
               COALESCE(s.enabled, 0), COALESCE(s.review_mode, 'manual'),
-              COALESCE(s.skip_draft_prs, 1), COALESCE(s.skip_self_prs, 1)
+              COALESCE(s.skip_draft_prs, 1), COALESCE(s.skip_self_prs, 1),
+              COALESCE(s.review_reviewed_branches, '[]')
        FROM repos r JOIN subscriptions s ON s.repo_id = r.id
        WHERE s.enabled = 1
        ORDER BY r.full_name ASC",
@@ -44,6 +49,7 @@ impl Database {
                     review_mode: row.get(13)?,
                     skip_draft_prs: row.get::<_, i64>(14)? == 1,
                     skip_self_prs: row.get::<_, i64>(15)? == 1,
+                    review_reviewed_branches: reviewed_branches(row.get(16)?),
                     poll_error: None,
                     poll_error_url: None,
                     poll_error_at: None,
@@ -246,6 +252,7 @@ impl Database {
               r.skill_path, r.skill_status, r.skill_checked_at, r.skill_error,
               COALESCE(s.enabled, 0), COALESCE(s.review_mode, 'manual'),
               COALESCE(s.skip_draft_prs, 1), COALESCE(s.skip_self_prs, 1),
+              COALESCE(s.review_reviewed_branches, '[]'),
               r.poll_error, r.poll_error_url, r.poll_error_at
        FROM repos r
        JOIN workspaces w ON w.id = r.workspace_id
@@ -272,9 +279,10 @@ impl Database {
                     review_mode: row.get(13)?,
                     skip_draft_prs: row.get::<_, i64>(14)? == 1,
                     skip_self_prs: row.get::<_, i64>(15)? == 1,
-                    poll_error: row.get(16)?,
-                    poll_error_url: row.get(17)?,
-                    poll_error_at: row.get(18)?,
+                    review_reviewed_branches: reviewed_branches(row.get(16)?),
+                    poll_error: row.get(17)?,
+                    poll_error_url: row.get(18)?,
+                    poll_error_at: row.get(19)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -383,6 +391,21 @@ impl Database {
         Ok(())
     }
 
+    pub fn save_repo_reviewed_branches(&self, repo_id: i64, branches: &[String]) -> Result<(), String> {
+        let branches = serde_json::to_string(branches).map_err(|error| error.to_string())?;
+        self.conn
+            .execute(
+                "INSERT INTO subscriptions (repo_id, enabled, review_mode, review_reviewed_branches, created_at, updated_at)
+                 VALUES ($1, 0, 'manual', $2, $3, $3)
+                 ON CONFLICT(repo_id) DO UPDATE SET
+                   review_reviewed_branches = excluded.review_reviewed_branches,
+                   updated_at = excluded.updated_at",
+                params![repo_id, branches, now_millis()],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn update_repo_skill(
         &self,
         full_name: &str,
@@ -411,6 +434,7 @@ impl Database {
               r.skill_path, r.skill_status, r.skill_checked_at, r.skill_error,
               COALESCE(s.enabled, 0), COALESCE(s.review_mode, 'manual'),
               COALESCE(s.skip_draft_prs, 1), COALESCE(s.skip_self_prs, 1),
+              COALESCE(s.review_reviewed_branches, '[]'),
               r.poll_error, r.poll_error_url, r.poll_error_at
        FROM repos r LEFT JOIN subscriptions s ON s.repo_id = r.id WHERE r.id = $1",
     ).map_err(|error| error.to_string())?;
@@ -432,9 +456,10 @@ impl Database {
                 review_mode: row.get(13)?,
                 skip_draft_prs: row.get::<_, i64>(14)? == 1,
                 skip_self_prs: row.get::<_, i64>(15)? == 1,
-                poll_error: row.get(16)?,
-                poll_error_url: row.get(17)?,
-                poll_error_at: row.get(18)?,
+                review_reviewed_branches: reviewed_branches(row.get(16)?),
+                poll_error: row.get(17)?,
+                poll_error_url: row.get(18)?,
+                poll_error_at: row.get(19)?,
             })
         })
         .map_err(|error| error.to_string())

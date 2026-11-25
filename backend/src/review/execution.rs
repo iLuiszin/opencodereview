@@ -174,10 +174,44 @@ pub(crate) fn run_inner(
             crate::review::scope::can_review_incrementally(&inputs.repo_path, prior, &current_scope, cancel)
         })
         .map(|prior| prior.head_sha.as_str());
+    let reviewed_prefix = crate::review::scope::reviewed_prefix_or_full(
+        &inputs.repo_path,
+        &inputs.review_reviewed_branches,
+        &merge_base_sha,
+        &head_sha,
+        cancel,
+    )?;
+    let reviewed_count_base = reviewed_prefix.as_ref().map(|prefix| {
+        match historical_prior_head {
+            Some(prior)
+                if prior != prefix.base_sha
+                    && crate::review::is_ancestor(&inputs.repo_path, &prefix.base_sha, prior, cancel) =>
+            {
+                prior.to_string()
+            }
+            _ => prefix.base_sha.clone(),
+        }
+    });
+    let use_reviewed_prefix = match (&reviewed_prefix, &reviewed_count_base) {
+        (Some(prefix), Some(base)) => base == &prefix.base_sha,
+        _ => false,
+    };
+    let reviewed_scope_note = match (&reviewed_prefix, &reviewed_count_base) {
+        (Some(prefix), Some(base)) => {
+            let commits = crate::review::scope::first_parent_count(&inputs.repo_path, base, &head_sha, cancel)
+                .unwrap_or(prefix.reviewed_commits);
+            Some(crate::review::scope::reviewed_prefix_note(prefix, base, &head_sha, commits))
+        }
+        _ => None,
+    };
     let full_pr_range = format!("{base_rev}...{head_sha}");
     let full_pr_changed = changed_files_local(&inputs.repo_path, &full_pr_range, cancel)?;
     let full_pr_diff = diff_local(&inputs.repo_path, &full_pr_range, cancel)?;
-    let reviewable_file_count = changed_file_targets_local(&inputs.repo_path, &full_pr_range, cancel)?
+    let file_limit_range = reviewed_count_base
+        .as_ref()
+        .map(|base| format!("{base}..{head_sha}"))
+        .unwrap_or_else(|| full_pr_range.clone());
+    let reviewable_file_count = changed_file_targets_local(&inputs.repo_path, &file_limit_range, cancel)?
         .iter()
         .filter(|path| crate::review::counts_toward_file_limit(path))
         .count();
@@ -188,6 +222,9 @@ pub(crate) fn run_inner(
         return Err(format!(
             "review file limit exceeded: {reviewable_file_count} reviewable changed files exceeds the {max_files}-file review limit"
         ));
+    }
+    if let Some(note) = &reviewed_scope_note {
+        progress(&phase_json("context", "running"), note);
     }
     inputs.open_db()?.store_finding_audit(
         inputs.run_id,
@@ -229,7 +266,7 @@ pub(crate) fn run_inner(
     } else {
         None
     };
-    let scope_reuse = crate::review::scope::prepare_scope_reuse(
+    let mut scope_reuse = crate::review::scope::prepare_scope_reuse(
         &inputs.repo_path,
         inputs.prior_scope.as_ref(),
         inputs.last_reviewed_sha.as_deref(),
@@ -267,6 +304,12 @@ pub(crate) fn run_inner(
             .and_then(|resolution| resolution.review_base.clone())
             .or_else(|| prior_reviewed_head.map(str::to_string))
     };
+    if use_reviewed_prefix {
+        if let Some(prefix) = &reviewed_prefix {
+            reviewed_since = Some(prefix.base_sha.clone());
+            scope_reuse = None;
+        }
+    }
     let (mut changed, mut diff, mut scope) = if let Some(selected) = &scope_reuse {
         (
             selected.changed_files.clone(),
@@ -276,7 +319,7 @@ pub(crate) fn run_inner(
                 selected.selection.reused_files.len()
             ),
         )
-    } else if usable_resolution.is_some_and(|resolution| resolution.fully_covered) {
+    } else if !use_reviewed_prefix && usable_resolution.is_some_and(|resolution| resolution.fully_covered) {
         (
             Vec::new(),
             String::new(),
@@ -317,7 +360,7 @@ pub(crate) fn run_inner(
                 .collect(),
             excluded_files: Vec::new(),
         });
-    let stacked_sources = if should_reuse_review_coverage(inputs) {
+    let stacked_sources = if should_reuse_review_coverage(inputs) && !use_reviewed_prefix {
         crate::review::coverage::reuse_stacked_scope(
             &inputs.repo_path,
             &db,
@@ -690,6 +733,10 @@ pub(crate) fn run_inner(
         )?;
         output.risk = score_review_risk(&risk_plan, &full_pr_diff, output.comments_json.as_deref());
         output.body.push_str(&deferred_note);
+        if let Some(note) = &reviewed_scope_note {
+            output.body.push_str("\n\n");
+            output.body.push_str(note);
+        }
         output.evidence_warnings.extend(deferred_files_warning(&deferred));
         progress(&sharded_phase_json("ready", "ok"), "Sharded review ready for approval.");
         return Ok(output);
@@ -894,8 +941,13 @@ pub(crate) fn run_inner(
         ),
     );
     progress(&phase_json("ready", "ok"), "Review ready for approval.");
+    let mut body = body + &deferred_note;
+    if let Some(note) = &reviewed_scope_note {
+        body.push_str("\n\n");
+        body.push_str(note);
+    }
     Ok(ReviewOutput {
-        body: body + &deferred_note,
+        body,
         comments_json,
         evidence_warnings,
         usage,

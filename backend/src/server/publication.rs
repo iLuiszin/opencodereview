@@ -109,6 +109,7 @@ pub(crate) fn review_result_body(
     prior_result_head_sha: Option<&str>,
     reviewer_version: &str,
     skill_version: &str,
+    scope_note: Option<&str>,
     evidence_warnings: &[crate::review::warnings::EvidenceWarning],
 ) -> String {
     let key = crate::db::result_marker_key(full_name, number, installation_id);
@@ -132,8 +133,17 @@ pub(crate) fn review_result_body(
             commit_url(reviewed_head_sha)
         ),
     };
+    let visible = match scope_note {
+        Some(note) => format!("{visible}\n\n{note}"),
+        None => visible,
+    };
     let visible = crate::review::warnings::append(&visible, evidence_warnings);
     format!("{key}\n{data}\n{run_marker}\n\n{visible}\n\n{}", ocr_footer())
+}
+
+pub(crate) fn reviewed_scope_note_in_body(body: Option<&str>) -> Option<&str> {
+    body?.lines()
+        .find(|line| line.starts_with("Reviewed `") && line.contains(" commits already on "))
 }
 
 pub(crate) fn reserve_effective_review_result(
@@ -170,6 +180,7 @@ pub(crate) fn reserve_effective_review_result(
                 .flatten(),
             &reviewer_version,
             &skill_version,
+            reviewed_scope_note_in_body(run.review_body.as_deref()),
             &evidence_warnings,
         )
     });

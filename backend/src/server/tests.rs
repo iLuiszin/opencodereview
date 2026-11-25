@@ -261,6 +261,7 @@ fn clean_reviews_are_completed_without_finding_selection_even_with_auto_post_ena
         expected_scope: None,
         prior_scope: None,
         last_reviewed_sha: None,
+        review_reviewed_branches: Vec::new(),
         force_full: false,
         reprocess: false,
         skill_content: String::new(),
@@ -632,6 +633,7 @@ fn result_comment_links_to_ocr_repository() {
         None,
         "0.1.0",
         "v0",
+        None,
         &[],
     );
     assert!(clean.contains(
@@ -760,6 +762,7 @@ fn evidence_warning_publication_preserves_findings_and_recovery_markers() {
         None,
         "reviewer",
         "skill",
+        None,
         &warnings,
     );
     assert!(limited.contains("OpenCodeReview found no issues") && limited.contains("[!WARNING]"));

@@ -176,6 +176,8 @@ pub struct ReviewInputs {
     /// Head SHA of the last review that produced output, if any. When it is an
     /// ancestor of the new head, the re-review is incremental (only the delta).
     pub last_reviewed_sha: Option<String>,
+    /// Branches whose merged commits were already review-approved elsewhere.
+    pub review_reviewed_branches: Vec<String>,
     pub force_full: bool,
     pub reprocess: bool,
     /// The ACTIVE skill version's content (built-in baseline, or an applied

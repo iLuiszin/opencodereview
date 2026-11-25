@@ -194,6 +194,7 @@ pub(crate) fn start_review_job_with_intent(
                 expected_scope: Some(expected_scope),
                 prior_scope,
                 last_reviewed_sha,
+                review_reviewed_branches: repo.review_reviewed_branches.clone(),
                 force_full,
                 reprocess,
                 skill_content,
