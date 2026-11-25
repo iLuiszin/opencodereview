@@ -1,7 +1,10 @@
+x-fork-runner: &fork-runner
+  image: opencodereview-runner:wp-${OCR_VERSION}
+  pull_policy: never
+
 services:
   server:
     image: opencodereview-server:wp-${OCR_VERSION}
     pull_policy: never
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
+  review-runner: *fork-runner
+  review-egress: *fork-runner
