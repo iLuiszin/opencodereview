@@ -7,6 +7,35 @@ pub(crate) struct PolledPr {
     pub queue_eligible: bool,
 }
 
+type SeenHeads = std::collections::HashMap<i64, (String, std::time::Instant)>;
+
+/// True once `head` has been the pull request's head for `quiet_seconds`, so a burst of pushes
+/// starts one automatic review on its last head instead of one per push. Zero turns it off.
+pub(crate) fn head_settled(
+    seen: &mut SeenHeads,
+    pr_id: i64,
+    head: &str,
+    quiet_seconds: i64,
+    now: std::time::Instant,
+) -> bool {
+    let quiet = std::time::Duration::from_secs(quiet_seconds.max(0) as u64);
+    match seen.get(&pr_id) {
+        Some((seen_head, since)) if seen_head == head => now.duration_since(*since) >= quiet,
+        _ => {
+            seen.insert(pr_id, (head.to_string(), now));
+            quiet.is_zero()
+        }
+    }
+}
+
+fn head_settled_now(pr_id: i64, head: &str, quiet_seconds: i64) -> bool {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<SeenHeads>> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    seen.lock()
+        .map(|mut seen| head_settled(&mut seen, pr_id, head, quiet_seconds, std::time::Instant::now()))
+        .unwrap_or(true)
+}
+
 #[cfg(not(test))]
 fn list_pr_files(full_name: &str, number: i64) -> Result<Vec<String>, String> {
     github::pr_file_paths(full_name, number)
@@ -289,6 +318,7 @@ pub(crate) fn poll_one_pr(
             .lock()
             .map(|jobs| jobs.contains_key(&pr_id))
             .unwrap_or(true)
+        && head_settled_now(pr_id, &pr.head_ref_oid, settings.review_quiet_seconds)
     {
         let _ = start_review_job(state, pr_id, false);
     }
@@ -302,4 +332,45 @@ pub(crate) fn poll_one_pr(
             && !matches!(computed_lane, "auto_skipped" | "size_skipped")
             && pr.changed_files.is_some(),
     })
+}
+
+#[cfg(test)]
+mod head_settled_tests {
+    use super::{head_settled, SeenHeads};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn zero_quiet_seconds_starts_on_the_first_poll() {
+        let mut seen = SeenHeads::new();
+        assert!(head_settled(&mut seen, 1, "a", 0, Instant::now()));
+    }
+
+    #[test]
+    fn a_head_starts_only_after_staying_unchanged_for_the_quiet_period() {
+        let mut seen = SeenHeads::new();
+        let start = Instant::now();
+        assert!(!head_settled(&mut seen, 1, "a", 120, start));
+        assert!(!head_settled(&mut seen, 1, "a", 120, start + Duration::from_secs(119)));
+        assert!(head_settled(&mut seen, 1, "a", 120, start + Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn a_new_head_restarts_the_quiet_period() {
+        let mut seen = SeenHeads::new();
+        let start = Instant::now();
+        assert!(!head_settled(&mut seen, 1, "a", 120, start));
+        assert!(!head_settled(&mut seen, 1, "b", 120, start + Duration::from_secs(100)));
+        assert!(!head_settled(&mut seen, 1, "b", 120, start + Duration::from_secs(200)));
+        assert!(head_settled(&mut seen, 1, "b", 120, start + Duration::from_secs(220)));
+    }
+
+    #[test]
+    fn pull_requests_are_timed_independently() {
+        let mut seen = SeenHeads::new();
+        let start = Instant::now();
+        assert!(!head_settled(&mut seen, 1, "a", 60, start));
+        assert!(!head_settled(&mut seen, 2, "a", 60, start + Duration::from_secs(50)));
+        assert!(head_settled(&mut seen, 1, "a", 60, start + Duration::from_secs(60)));
+        assert!(!head_settled(&mut seen, 2, "a", 60, start + Duration::from_secs(60)));
+    }
 }

@@ -80,6 +80,9 @@ pub struct Settings {
     pub review_deep_threshold: i64,
     pub review_chunk_size: i64,
     pub review_parallel_chunks: i64,
+    /// Seconds a pull request's head must stay unchanged before an automatic review starts; 0 is off.
+    #[serde(default)]
+    pub review_quiet_seconds: i64,
     pub review_max_files: i64,
     /// Above this many changed files a review covers only the highest-priority ones and lists
     /// the rest as not reviewed. `0` reviews every file.

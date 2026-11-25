@@ -55,6 +55,11 @@ impl Database {
             .and_then(|value| value.parse().ok())
             .filter(|value| (1..=20).contains(value))
             .unwrap_or(6);
+        let review_quiet_seconds = self
+            .setting("review_quiet_seconds")?
+            .and_then(|value| value.parse().ok())
+            .filter(|value| (0..=3600).contains(value))
+            .unwrap_or(0);
         let review_max_files = self
             .setting("review_max_files")?
             .and_then(|value| value.parse().ok())
@@ -134,6 +139,7 @@ impl Database {
             review_deep_threshold,
             review_chunk_size,
             review_parallel_chunks,
+            review_quiet_seconds,
             review_max_files,
             review_focus_files,
             review_lens_pass,
@@ -168,6 +174,7 @@ impl Database {
         "review_deep_threshold",
         "review_chunk_size",
         "review_parallel_chunks",
+        "review_quiet_seconds",
         "review_max_files",
         "review_focus_files",
         "review_lens_pass",
@@ -217,6 +224,9 @@ impl Database {
         ) && value.parse::<i64>().ok().filter(|value| *value > 0).is_none()
         {
             return Err("Review numeric settings must be positive.".to_string());
+        }
+        if key == "review_quiet_seconds" && value.parse::<i64>().ok().filter(|value| (0..=3600).contains(value)).is_none() {
+            return Err("review_quiet_seconds must be between 0 and 3600.".to_string());
         }
         if key == "review_focus_files" && value.parse::<i64>().ok().filter(|value| *value >= 0).is_none() {
             return Err("review_focus_files must be zero or a positive number of files.".to_string());
