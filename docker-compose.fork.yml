@@ -1,0 +1,7 @@
+services:
+  server:
+    image: opencodereview-server:wp-${OCR_VERSION}
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
