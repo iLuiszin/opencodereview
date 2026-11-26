@@ -154,6 +154,8 @@ const PROVIDER_HOSTS: &[&str] = &[
     "api2.cursor.sh",
     "agentn.global.api5.cursor.sh",
     "api3.cursor.sh",
+    "server.codeium.com",
+    "api.devin.ai",
 ];
 
 const MAX_CONNECTIONS: usize = 48;
@@ -336,6 +338,8 @@ mod tests {
             "api2.cursor.sh",
             "agentn.global.api5.cursor.sh",
             "api3.cursor.sh",
+            "server.codeium.com",
+            "api.devin.ai",
         ] {
             assert!(destination(&format!("CONNECT {host}:443 HTTP/1.1\r\n\r\n"), &providers).is_ok());
         }
@@ -346,8 +350,8 @@ mod tests {
             "www.googleapis.com",
             "play.googleapis.com",
             "unleash.codeium.com",
-            "api.devin.ai",
-            "server.codeium.com",
+            "app.devin.ai",
+            "devin.ai",
             "models.opencode.ai",
             "cursor.com",
             "repo42.cursor.sh",

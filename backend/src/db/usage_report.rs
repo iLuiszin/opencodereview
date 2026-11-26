@@ -282,6 +282,8 @@ fn provider_of_model(model: &str) -> Option<&'static str> {
         Some("opencode")
     } else if model == "cursor" {
         Some("cursor")
+    } else if model == "devin" {
+        Some("devin")
     } else {
         None
     }

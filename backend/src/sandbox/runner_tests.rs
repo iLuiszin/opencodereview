@@ -865,3 +865,18 @@ fn cursor_hooks_allow_only_evidence_reads_and_snapshot_commands() {
     }
     assert!(guard_cursor_tool("not json".as_bytes()).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn devin_credentials_land_where_xdg_data_home_points() {
+    let home = Path::new("/scratch/session/devin");
+    let credentials = devin_credentials_path(home);
+    // The session exports XDG_DATA_HOME=<home>/data and the CLI reads
+    // $XDG_DATA_HOME/devin/credentials.toml; the old $HOME and $HOME/.local/share paths are gone.
+    assert_eq!(
+        credentials,
+        Path::new("/scratch/session/devin/data/devin/credentials.toml")
+    );
+    assert_ne!(credentials, home.join("devin/credentials.toml"));
+    assert_ne!(credentials, home.join(".local/share/devin/credentials.toml"));
+}

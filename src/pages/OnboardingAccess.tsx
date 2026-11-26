@@ -8,6 +8,7 @@ import {
   CopyCode,
   CursorKeySignIn,
   CursorSignIn,
+  DevinCredentialsSignIn,
   friendlyError,
   OpencodeKeySignIn,
   OpencodeSignIn,
@@ -145,6 +146,7 @@ const planDetail: Record<AiProvider["provider"], string> = {
   codex: "ChatGPT Plus or Pro plan",
   opencode: "OpenCode Go plan or Zen credits",
   cursor: "Cursor Pro, Ultra or Teams plan",
+  devin: "A Devin plan, from a devin auth login",
 };
 
 /** The second way into each provider, offered from the row's menu. */
@@ -173,6 +175,12 @@ const alternative: Record<
   cursor: {
     label: "Use an API key",
     hint: "A user API key from your Cursor dashboard",
+    icon: <KeyRound />,
+    method: "code",
+  },
+  devin: {
+    label: "Paste credentials",
+    hint: "The credentials.toml of a devin auth login on any computer",
     icon: <KeyRound />,
     method: "code",
   },
@@ -286,6 +294,8 @@ export function PlanStep({ onBack, onContinue }: { onBack: () => void; onContinu
                     ) : (
                       <OpencodeSignIn onDone={finish} onCancel={() => setSignIn(null)} />
                     )
+                  ) : provider.provider === "devin" ? (
+                    <DevinCredentialsSignIn onDone={finish} onCancel={() => setSignIn(null)} />
                   ) : provider.provider === "codex" ? (
                     <CodexSignIn
                       mode={open.method === "code" ? "device" : "browser"}

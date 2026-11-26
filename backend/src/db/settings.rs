@@ -225,7 +225,13 @@ impl Database {
         {
             return Err("Review numeric settings must be positive.".to_string());
         }
-        if key == "review_quiet_seconds" && value.parse::<i64>().ok().filter(|value| (0..=3600).contains(value)).is_none() {
+        if key == "review_quiet_seconds"
+            && value
+                .parse::<i64>()
+                .ok()
+                .filter(|value| (0..=3600).contains(value))
+                .is_none()
+        {
             return Err("review_quiet_seconds must be between 0 and 3600.".to_string());
         }
         if key == "review_focus_files" && value.parse::<i64>().ok().filter(|value| *value >= 0).is_none() {

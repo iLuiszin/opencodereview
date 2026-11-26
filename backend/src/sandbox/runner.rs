@@ -33,7 +33,11 @@ const CURSOR_CLI: &str = "/opt/cursor/bin/cursor-agent";
 /// The Cursor CLI keeps its XDG homes, configuration and a browser sign-in here; an API key
 /// arrives in the environment.
 const CURSOR_HOME: &str = "/scratch/session/cursor";
-const PROVIDERS: &[&str] = &["claude", "codex", "opencode", "cursor"];
+const DEVIN_CLI: &str = "/opt/devin/bin/devin";
+/// The Devin CLI keeps its credentials and state under its home, owned by the model UID; the
+/// sign-in is copied in as `$XDG_DATA_HOME/devin/credentials.toml`, the only path it reads.
+const DEVIN_HOME: &str = "/scratch/session/devin";
+const PROVIDERS: &[&str] = &["claude", "codex", "opencode", "cursor", "devin"];
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", deny_unknown_fields)]
@@ -779,6 +783,65 @@ fn cursor_refreshed(auth: &str) -> Option<String> {
         .filter(|raw| raw != auth)
 }
 
+/// The one `credentials.toml` path the Devin CLI reads: under `$XDG_DATA_HOME`, which the session
+/// sets to `<home>/data`.
+#[cfg(unix)]
+pub(crate) fn devin_credentials_path(home: &Path) -> std::path::PathBuf {
+    home.join("data").join("devin").join("credentials.toml")
+}
+
+/// A Devin execution on `account` with `model`: its `credentials.toml` is copied into a home only
+/// the model UID owns. Returns the command and the sign-in it started from.
+#[cfg(unix)]
+fn devin_session(account: i64, model: &str) -> Result<(Command, String), String> {
+    let auth_root = std::env::var("OCR_RUNNER_AUTH_ROOT").unwrap_or_else(|_| "/claude-auth/app-managed".into());
+    let auth = read_output(
+        &Path::new(&auth_root).join(format!("accounts/{account}/devin/credentials.toml")),
+        crate::providers::devin::MAX_CREDENTIALS_BYTES as u64,
+    )
+    .ok()
+    .flatten()
+    .filter(|raw| crate::providers::devin::validate_credentials(raw).is_ok())
+    .ok_or_else(|| crate::providers::claude::Failure::Auth.encode())?;
+    let home = Path::new(DEVIN_HOME);
+    private_dir(Path::new(SESSION), 0o755)?;
+    for name in ["", "data", "config", "cache", "state"] {
+        let directory = home.join(name);
+        private_dir(&directory, 0o700)?;
+        std::os::unix::fs::chown(&directory, Some(UID), Some(UID)).map_err(|e| e.to_string())?;
+    }
+    let credentials = devin_credentials_path(home);
+    private_dir(credentials.parent().ok_or("Missing credentials parent")?, 0o700)?;
+    std::os::unix::fs::chown(
+        credentials.parent().ok_or("Missing credentials parent")?,
+        Some(UID),
+        Some(UID),
+    )
+    .map_err(|e| e.to_string())?;
+    session_file(&credentials, &auth, 0o600, true)?;
+    std::os::unix::fs::chown(&credentials, Some(UID), Some(UID)).map_err(|e| e.to_string())?;
+    let proxy = std::env::var("OCR_RUNNER_PROXY").unwrap_or_else(|_| "http://review-egress:8790".into());
+    let mut command = Command::new(DEVIN_CLI);
+    command
+        .env_clear()
+        .env("PATH", "/opt/devin/bin:/usr/local/bin:/usr/bin:/bin")
+        .env("HOME", home)
+        .env("TMPDIR", "/tmp")
+        .env("XDG_DATA_HOME", home.join("data"))
+        .env("XDG_CONFIG_HOME", home.join("config"))
+        .env("XDG_CACHE_HOME", home.join("cache"))
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("HTTPS_PROXY", &proxy)
+        .env("HTTP_PROXY", &proxy)
+        .env("NO_COLOR", "1")
+        .current_dir("/work")
+        .uid(UID)
+        .gid(UID)
+        .process_group(0)
+        .args(crate::providers::devin::print_args(Path::new("/work/prompt.md"), model));
+    Ok((command, auth))
+}
+
 /// Inference arguments for an isolated stage; the prompt is supplied on stdin.
 #[cfg(unix)]
 pub(crate) fn inference(command: &mut Command, model: &str, effort: &str) -> Result<(), String> {
@@ -1503,6 +1566,10 @@ fn run(
             let (command, auth) = cursor_session(account, &model)?;
             (command, Some(auth))
         }
+        "devin" => {
+            let (command, auth) = devin_session(account, &model)?;
+            (command, Some(auth))
+        }
         _ => {
             let mut command = session(account)?;
             inference(&mut command, &model, &effort)?;
@@ -1560,6 +1627,7 @@ fn run(
                         "codex" => crate::providers::codex::failure(&stdout, &stderr),
                         "opencode" => crate::providers::opencode::failure(&stdout, &stderr),
                         "cursor" => crate::providers::cursor::failure(&stdout, &stderr),
+                        "devin" => crate::providers::devin::failure(&stdout, &stderr),
                         _ => crate::providers::claude::failure(&stdout, &stderr),
                     });
                 }
@@ -1595,6 +1663,7 @@ fn run(
     let refreshed = match provider.as_str() {
         "opencode" => opencode_refreshed(&auth),
         "cursor" => cursor_refreshed(&auth),
+        "devin" => None,
         _ => read_output(
             &Path::new(CODEX_HOME).join("auth.json"),
             crate::providers::codex::MAX_AUTH_BYTES as u64,
@@ -1606,6 +1675,7 @@ fn run(
     let secrets_of = match provider.as_str() {
         "opencode" => crate::providers::opencode::secrets,
         "cursor" => crate::providers::cursor::secrets,
+        "devin" => crate::providers::devin::secrets,
         _ => crate::providers::codex::secrets,
     };
     let secrets = secrets_of(&auth)
@@ -1629,6 +1699,7 @@ fn run(
                         }
                     })?
                 }
+                "devin" => crate::providers::devin::final_message(transcript.as_deref().unwrap_or_default())?,
                 _ => read_output(&Path::new(CODEX_HOME).join("last-message.txt"), 4_000_000)?
                     .ok_or("Codex final response is missing")?,
             };

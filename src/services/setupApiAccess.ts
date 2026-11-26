@@ -203,6 +203,12 @@ export const setupApiAccess = {
       method: "POST",
       body: JSON.stringify({ key, ...(accountId ? { accountId } : {}) }),
     }),
+  /** Saves a pasted Devin `credentials.toml` to `accountId` or to a new account. */
+  devinCredentialsSave: (credentials: string, accountId?: number) =>
+    http<{ ok: boolean }>("/auth/devin/credentials", {
+      method: "POST",
+      body: JSON.stringify({ credentials, ...(accountId ? { accountId } : {}) }),
+    }),
   githubAuthLogout: () => http<{ ok: boolean }>("/auth/github/logout", { method: "POST", body: JSON.stringify({}) }),
   getSettings: () => http<Settings>("/settings"),
   saveSettingsBatch: (payload: {

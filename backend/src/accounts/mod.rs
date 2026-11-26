@@ -47,6 +47,17 @@ pub(crate) fn cursor_auth_path(id: i64) -> PathBuf {
     root().join(id.to_string()).join("cursor/auth.json")
 }
 
+pub(crate) fn devin_credentials_path(id: i64) -> PathBuf {
+    root().join(id.to_string()).join("devin/credentials.toml")
+}
+
+/// Saves a Devin account: the `credentials.toml` of a `devin auth login` on any computer, rebuilt
+/// to hold only the API key and the fixed endpoint URLs.
+pub(crate) fn store_devin_credentials(id: i64, raw: &str) -> Result<(), String> {
+    let stored = crate::providers::devin::rebuild_credentials(raw)?;
+    store(&devin_credentials_path(id), id, stored.as_bytes())
+}
+
 /// The models a Cursor account's subscription offers (`cursor-agent models` at sign-in), kept
 /// beside its sign-in for the server only: runners never receive it.
 pub(crate) fn cursor_models_path(id: i64) -> PathBuf {
@@ -233,6 +244,8 @@ pub(crate) fn has_credential(provider: &str, id: i64) -> bool {
         // A browser sign-in is never renewed, so an expired one is no credential.
         "cursor" => fs::read_to_string(cursor_auth_path(id))
             .is_ok_and(|raw| crate::providers::cursor::usable(&raw, crate::db::now_millis())),
+        "devin" => fs::read_to_string(devin_credentials_path(id))
+            .is_ok_and(|raw| crate::providers::devin::validate_credentials(&raw).is_ok()),
         _ => false,
     }
 }

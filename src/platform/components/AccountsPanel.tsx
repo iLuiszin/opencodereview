@@ -7,6 +7,7 @@ import {
   CodexSignIn,
   CursorKeySignIn,
   CursorSignIn,
+  DevinCredentialsSignIn,
   OpencodeKeySignIn,
   OpencodeSignIn,
 } from "../../components/AccessConnect";
@@ -42,6 +43,7 @@ export const providerName: Record<Provider, string> = {
   codex: "ChatGPT",
   opencode: "OpenCode",
   cursor: "Cursor",
+  devin: "Devin",
 };
 
 /** Claude's asterisk, Codex's knot, OpenCode's brackets or Cursor's cube. */
@@ -58,6 +60,21 @@ export function ProviderGlyph({ provider }: { provider: Provider }) {
         aria-hidden="true"
       >
         <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3ZM4 7.5 12 12l8-4.5M12 12v9" />
+      </svg>
+    );
+  if (provider === "devin")
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        className="size-4 text-fg"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 4v16" />
       </svg>
     );
   if (provider === "opencode")
@@ -363,6 +380,16 @@ function addOptions(provider: Provider, start: (code?: boolean) => void) {
         onSelect: () => start(true),
       },
     ];
+  if (provider === "devin")
+    return [
+      main,
+      {
+        label: "Paste credentials",
+        hint: "The credentials.toml of a devin auth login on any computer",
+        icon: <KeyRound />,
+        onSelect: () => start(true),
+      },
+    ];
   if (provider === "codex")
     return [
       main,
@@ -471,6 +498,12 @@ export function AccountsPanel({ provider }: { provider?: Provider } = {}) {
                 onSelect: () => setSignIn({ provider: "cursor" }),
               },
               {
+                label: "Devin",
+                hint: "A Devin plan, from a devin auth login",
+                icon: <ProviderGlyph provider="devin" />,
+                onSelect: () => setSignIn({ provider: "devin" }),
+              },
+              {
                 label: "Claude with a token",
                 hint: "From claude setup-token on another computer",
                 icon: <KeyRound />,
@@ -493,6 +526,12 @@ export function AccountsPanel({ provider }: { provider?: Provider } = {}) {
                 hint: "A user API key from your Cursor dashboard",
                 icon: <KeyRound />,
                 onSelect: () => setSignIn({ provider: "cursor", code: true }),
+              },
+              {
+                label: "Devin with credentials",
+                hint: "The credentials.toml of a devin auth login",
+                icon: <KeyRound />,
+                onSelect: () => setSignIn({ provider: "devin", code: true }),
               },
             ]}
           />
@@ -576,7 +615,9 @@ export function AccountsPanel({ provider }: { provider?: Provider } = {}) {
                 ? `Sign in again to “${accounts.find((account) => account.id === signIn.accountId)?.label ?? providerName[signIn.provider]}”`
                 : (signIn.provider === "opencode" || signIn.provider === "cursor") && signIn.code
                   ? `Add ${signIn.provider === "opencode" ? "an" : "a"} ${providerName[signIn.provider]} API key`
-                  : `Add a ${providerName[signIn.provider]} account`}
+                  : signIn.provider === "devin" && signIn.code
+                    ? `Add ${providerName[signIn.provider]} credentials`
+                    : `Add a ${providerName[signIn.provider]} account`}
             </h3>
             {signIn.provider === "cursor" ? (
               signIn.code ? (
@@ -609,6 +650,15 @@ export function AccountsPanel({ provider }: { provider?: Provider } = {}) {
               />
             ) : signIn.provider === "opencode" ? (
               <OpencodeKeySignIn
+                accountId={signIn.accountId}
+                onDone={() => {
+                  setSignIn(null);
+                  refresh();
+                }}
+                onCancel={() => setSignIn(null)}
+              />
+            ) : signIn.provider === "devin" ? (
+              <DevinCredentialsSignIn
                 accountId={signIn.accountId}
                 onDone={() => {
                   setSignIn(null);

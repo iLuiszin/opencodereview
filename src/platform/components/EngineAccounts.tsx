@@ -7,6 +7,7 @@ import {
   CodexSignIn,
   CursorKeySignIn,
   CursorSignIn,
+  DevinCredentialsSignIn,
   OpencodeKeySignIn,
   OpencodeSignIn,
 } from "../../components/AccessConnect";
@@ -116,9 +117,10 @@ const planLabel: Record<Provider, string> = {
   codex: "Plus or Pro",
   opencode: "Go or Zen",
   cursor: "Pro, Ultra or Teams",
+  devin: "Devin plan",
 };
 
-/** Signs in a new Claude, ChatGPT, OpenCode or Cursor account without leaving the picker. */
+/** Signs in a new Claude, ChatGPT, OpenCode, Cursor or Devin account without leaving the picker. */
 export function AddAccount({ onDone, onCancel }: { onDone: (provider: Provider) => void; onCancel: () => void }) {
   const [choice, setChoice] = useState<{ provider: Provider; alternative: boolean } | null>(null);
   const done = () => choice && onDone(choice.provider);
@@ -140,7 +142,7 @@ export function AddAccount({ onDone, onCancel }: { onDone: (provider: Provider) 
       </div>
       {!choice ? (
         <div className="flex flex-col gap-1.5">
-          {(["claude", "codex", "opencode", "cursor"] as const).map((provider) => (
+          {(["claude", "codex", "opencode", "cursor", "devin"] as const).map((provider) => (
             <button
               key={provider}
               type="button"
@@ -167,6 +169,8 @@ export function AddAccount({ onDone, onCancel }: { onDone: (provider: Provider) 
             ) : (
               <OpencodeSignIn onDone={done} onCancel={back} />
             )
+          ) : choice.provider === "devin" ? (
+            <DevinCredentialsSignIn onDone={done} onCancel={back} />
           ) : choice.provider === "codex" ? (
             <CodexSignIn mode={choice.alternative ? "device" : "browser"} onDone={done} onCancel={back} />
           ) : choice.alternative ? (
@@ -174,21 +178,23 @@ export function AddAccount({ onDone, onCancel }: { onDone: (provider: Provider) 
           ) : (
             <ClaudeSignIn onDone={done} onCancel={back} />
           )}
-          <button
-            type="button"
-            className="cursor-pointer self-start text-caption text-fg-subtle underline-offset-2 hover:text-fg hover:underline"
-            onClick={() => setChoice({ ...choice, alternative: !choice.alternative })}
-          >
-            {choice.provider === "opencode" || choice.provider === "cursor"
-              ? choice.alternative
-                ? `Sign in to ${providerName[choice.provider]} instead`
-                : "Use an API key instead"
-              : choice.alternative
-                ? `Sign in to ${providerName[choice.provider]} in the browser instead`
-                : choice.provider === "claude"
-                  ? "Paste a token from claude setup-token instead"
-                  : "Sign in with a one-time code instead"}
-          </button>
+          {choice.provider !== "devin" && (
+            <button
+              type="button"
+              className="cursor-pointer self-start text-caption text-fg-subtle underline-offset-2 hover:text-fg hover:underline"
+              onClick={() => setChoice({ ...choice, alternative: !choice.alternative })}
+            >
+              {choice.provider === "opencode" || choice.provider === "cursor"
+                ? choice.alternative
+                  ? `Sign in to ${providerName[choice.provider]} instead`
+                  : "Use an API key instead"
+                : choice.alternative
+                  ? `Sign in to ${providerName[choice.provider]} in the browser instead`
+                  : choice.provider === "claude"
+                    ? "Paste a token from claude setup-token instead"
+                    : "Sign in with a one-time code instead"}
+            </button>
+          )}
         </>
       )}
     </div>
