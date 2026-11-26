@@ -2,6 +2,7 @@
 pub(crate) mod claude;
 pub(crate) mod codex;
 pub(crate) mod cursor;
+pub(crate) mod devin;
 pub(crate) mod engines;
 pub(crate) mod opencode;
 pub(crate) mod opencode_catalogue;

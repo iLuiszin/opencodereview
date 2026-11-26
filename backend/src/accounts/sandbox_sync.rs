@@ -39,6 +39,10 @@ pub(crate) fn sync_app_auth() -> Result<(), String> {
             &crate::accounts::cursor_auth_path(*id),
             &target.join(format!("accounts/{id}/cursor/auth.json")),
         )?;
+        mirror(
+            &crate::accounts::devin_credentials_path(*id),
+            &target.join(format!("accounts/{id}/devin/credentials.toml")),
+        )?;
     }
     if let Ok(entries) = fs::read_dir(target.join("accounts")) {
         for entry in entries.flatten() {

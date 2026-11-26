@@ -1267,7 +1267,7 @@ pub(crate) fn ran_on_pinned_provider(inputs: &ReviewInputs, usage: &RunUsage) ->
     usage.by_model.iter().all(|entry| {
         pinned
             == match entry.model.as_str() {
-                provider @ ("codex" | "opencode" | "cursor") => provider,
+                provider @ ("codex" | "opencode" | "cursor" | "devin") => provider,
                 _ => "claude",
             }
     })

@@ -97,6 +97,21 @@ def latest_cursor():
     return version, checksum
 
 
+def latest_devin(pinned_versions):
+    # Devin publishes no release feed; static.devin.ai serves only pinned version tarballs, so
+    # the canary reports the pinned version and verifies it is still downloadable (checksum
+    # re-checked against the Dockerfile's ARG).
+    version = pinned_versions.get("DEVIN_CLI_VERSION")
+    if not version:
+        sys.exit("Dockerfile pins no DEVIN_CLI_VERSION")
+    url = f"https://static.devin.ai/cli/{version}/devin-{version}-x86_64-unknown-linux.tar.gz"
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=120)
+    except OSError as error:
+        sys.exit(f"Devin {version} is no longer downloadable: {error}")
+    return version
+
+
 def pinned():
     dockerfile = (ROOT / "docker/Dockerfile").read_text()
     return dict(re.findall(r"^ARG (\w+_CLI_VERSION)=(\S+)$", dockerfile, re.M))
@@ -107,6 +122,7 @@ def resolve():
     codex = latest_github("openai/codex", "rust-v")
     opencode = latest_github("anomalyco/opencode", "v")
     cursor, cursor_checksum = latest_cursor()
+    devin = latest_devin(pinned())
     manifest = json.loads(fetch(f"{CLAUDE_RELEASES}/{claude}/manifest.json"))
     args = {
         "CLAUDE_CLI_VERSION": claude,
@@ -118,10 +134,11 @@ def resolve():
         "OPENCODE_CLI_SHA256_AMD64": sha256(f"https://github.com/anomalyco/opencode/releases/download/v{opencode}/opencode-linux-x64.tar.gz"),
         "CURSOR_CLI_VERSION": cursor,
         "CURSOR_CLI_SHA256_AMD64": cursor_checksum,
+        "DEVIN_CLI_VERSION": devin,
     }
     current = pinned()
     rows = ["| CLI | Pinned | Newest |", "| --- | --- | --- |"]
-    for name in ["CLAUDE", "CODEX", "OPENCODE", "CURSOR"]:
+    for name in ["CLAUDE", "CODEX", "OPENCODE", "CURSOR", "DEVIN"]:
         key = name + "_CLI_VERSION"
         mark = "" if current.get(key) == args[key] else " (new)"
         rows.append(f"| {name.title()} | {current.get(key, '?')} | {args[key]}{mark} |")
@@ -153,6 +170,7 @@ def flags(image):
         "claude": ["claude", "--help"],
         "codex": ["codex", "exec", "--help"],
         "opencode": ["opencode", "run", "--help"],
+        "devin": ["devin", "--help"],
         # Cursor hides the flags that keep it to the review (`--disable-auto-update`, ...) from its
         # help, so its bundle is searched instead.
         "cursor": ["sh", "-c", "cat /opt/cursor/bin/*.js | grep -o -- '--[a-z][a-z-]*' | sort -u"],

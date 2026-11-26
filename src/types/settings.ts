@@ -33,7 +33,7 @@ export interface Settings {
 
 export interface AiAccount {
   id: number;
-  provider: "claude" | "codex" | "opencode" | "cursor";
+  provider: "claude" | "codex" | "opencode" | "cursor" | "devin";
   label: string;
   priority: number;
   enabled: boolean;

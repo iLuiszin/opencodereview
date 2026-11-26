@@ -416,7 +416,7 @@ fn validate_review_stage_inputs(context: &Path, additional_inputs: Option<&Path>
 /// provider the review started on.
 fn stage_model(inputs: &ReviewInputs, usage: &RunUsage) -> String {
     let provider = match usage.model.as_deref() {
-        Some(provider @ ("codex" | "opencode" | "cursor")) => provider,
+        Some(provider @ ("codex" | "opencode" | "cursor" | "devin")) => provider,
         Some(model) => return model.to_string(),
         None => match inputs.engines.as_ref().and_then(|pinned| pinned.provider.as_deref()) {
             Some(provider) => provider,

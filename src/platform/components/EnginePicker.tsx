@@ -16,7 +16,7 @@ import { AccountUsageBar } from "./AccountUsageBar";
 import { AccountChoices, AddAccount } from "./EngineAccounts";
 
 type Provider = AiAccount["provider"];
-const PROVIDERS: Provider[] = ["claude", "codex", "opencode", "cursor"];
+const PROVIDERS: Provider[] = ["claude", "codex", "opencode", "cursor", "devin"];
 
 const effortLabel: Record<string, string> = {
   none: "None",
