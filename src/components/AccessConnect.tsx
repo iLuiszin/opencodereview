@@ -296,6 +296,18 @@ export function CursorKeySignIn(props: KeySignInProps) {
   );
 }
 
+/** Connects a Devin account from the `credentials.toml` of a `devin auth login` on any computer. */
+export function DevinCredentialsSignIn(props: KeySignInProps) {
+  return (
+    <KeySignIn
+      name="Devin"
+      hint="Run devin auth login on any computer and paste the contents of ~/.local/share/devin/credentials.toml here."
+      save={setupApi.devinCredentialsSave}
+      {...props}
+    />
+  );
+}
+
 function KeySignIn({
   name,
   hint,

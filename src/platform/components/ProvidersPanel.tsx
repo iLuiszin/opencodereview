@@ -14,12 +14,13 @@ import {
 } from "./AccountsPanel";
 
 type Provider = AiAccount["provider"];
-const PROVIDERS: Provider[] = ["claude", "codex", "opencode", "cursor"];
+const PROVIDERS: Provider[] = ["claude", "codex", "opencode", "cursor", "devin"];
 const planHint: Record<Provider, string> = {
   claude: "Claude Pro, Max or Team plan",
   codex: "ChatGPT Plus or Pro plan",
   opencode: "OpenCode Go plan or Zen credits",
   cursor: "Cursor Pro, Ultra or Teams plan",
+  devin: "A Devin plan, from a devin auth login",
 };
 
 const groupClass = "flex flex-col overflow-hidden rounded-xl border border-line/70 bg-surface";

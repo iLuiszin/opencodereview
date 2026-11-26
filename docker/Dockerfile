@@ -106,6 +106,27 @@ RUN case "$TARGETARCH" in \
   && test "$(HOME=/tmp/cursor-home AGENT_CLI_CREDENTIAL_STORE=file /opt/cursor/bin/cursor-agent --version)" = "$CURSOR_CLI_VERSION" \
   && rm -rf /tmp/cursor-home
 LABEL ai.cursor.cli.version="${CURSOR_CLI_VERSION}"
+# Devin's CLI is a single static Rust binary; fetched from the release the manifest pins, with the
+# manifest's own checksum.
+ARG DEVIN_CLI_VERSION=3000.14.30821
+ARG DEVIN_CLI_SHA256_AMD64=4dc43e3e4388bace60fe2aa8010cbb399402e724892d7175845b1cdef00e7ddb
+ARG DEVIN_CLI_SHA256_ARM64=3deb8af6b026060e975ed371936e139818020e5dc5abbcba07cde039f473a5a5
+RUN case "$TARGETARCH" in \
+      amd64) platform=x86_64-unknown-linux; checksum="$DEVIN_CLI_SHA256_AMD64" ;; \
+      arm64) platform=aarch64-unknown-linux; checksum="$DEVIN_CLI_SHA256_ARM64" ;; \
+      *) echo "Unsupported Devin CLI architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+  && curl -fsSL --retry 3 "https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/devin-${DEVIN_CLI_VERSION}-${platform}.tar.gz" -o /tmp/devin.tar.gz \
+  && printf '%s  /tmp/devin.tar.gz\n' "$checksum" | sha256sum -c - \
+  && mkdir -p /opt/devin \
+  && tar -xzf /tmp/devin.tar.gz -C /opt/devin \
+  && rm /tmp/devin.tar.gz \
+  && chown -R root:root /opt/devin \
+  && chmod 0755 /opt/devin/bin/devin \
+  && ln -s /opt/devin/bin/devin /usr/local/bin/devin \
+  && test "$(HOME=/tmp/devin-home XDG_DATA_HOME=/tmp/devin-home XDG_CONFIG_HOME=/tmp/devin-home XDG_CACHE_HOME=/tmp/devin-home XDG_STATE_HOME=/tmp/devin-home /opt/devin/bin/devin version | cut -d ' ' -f2)" = "$DEVIN_CLI_VERSION" \
+  && rm -rf /tmp/devin-home
+LABEL ai.devin.cli.version="${DEVIN_CLI_VERSION}"
 ENV DISABLE_AUTOUPDATER=1
 WORKDIR /app
 COPY --from=server /app/assets ./assets

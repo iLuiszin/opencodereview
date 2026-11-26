@@ -13,7 +13,6 @@ const CLAUDE_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 const CODEX_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max", "ultra"];
 const CODEX_EFFORTS_MAX: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 const CODEX_EFFORTS_XHIGH: &[&str] = &["low", "medium", "high", "xhigh"];
-
 /// The first entry of each list is the provider's default.
 const CLAUDE: &[EngineModel] = &[
     model("claude-opus-5-5", "Opus 5.5", CLAUDE_EFFORTS, "medium"),
@@ -31,6 +30,12 @@ const CODEX: &[EngineModel] = &[
     model("gpt-5.6-terra", "GPT-5.6 Terra", CODEX_EFFORTS, "medium"),
     model("gpt-5.6-luna", "GPT-5.6 Luna", CODEX_EFFORTS_MAX, "medium"),
     model("gpt-5.5", "GPT-5.5", CODEX_EFFORTS_XHIGH, "medium"),
+];
+/// Devin's SWE models; effort variants are models of their own, as Cursor's are.
+const DEVIN: &[EngineModel] = &[
+    model("swe-high", "SWE High", &[], ""),
+    model("swe-2-1-high", "SWE-2.1 High", &[], ""),
+    model("claude-opus-5-5", "Opus 5.5 (Devin)", &[], ""),
 ];
 const fn model(
     id: &'static str,
@@ -51,6 +56,7 @@ pub(crate) const PROVIDERS: &[(&str, &str)] = &[
     ("codex", "ChatGPT"),
     ("opencode", "OpenCode"),
     ("cursor", "Cursor"),
+    ("devin", "Devin"),
 ];
 
 /// A model `provider` reviews with, from the lists above or, for OpenCode, from opencode.ai.
@@ -82,6 +88,7 @@ pub(crate) fn models(provider: &str, plans: &Plans) -> Vec<Model> {
         "codex" => listed(CODEX),
         "opencode" => opencode_models(plans, true),
         "cursor" => cursor_models(plans),
+        "devin" => listed(DEVIN),
         _ => vec![],
     }
 }
@@ -286,10 +293,14 @@ mod tests {
 
     #[test]
     fn every_listed_provider_defaults_to_a_valid_engine() {
-        for provider in ["claude", "codex"] {
+        for provider in ["claude", "codex", "devin"] {
             let (model, effort) = default_engine(provider, &None);
             assert_eq!(resolve(provider, &model, &effort, &None).unwrap(), (model, effort));
         }
+        assert_eq!(default_engine("devin", &None).0, "swe-high");
+        assert!(resolve("devin", "swe-high", "high", &None).is_err());
+        assert!(resolve("devin", "swe-2-1-high", "", &None).is_ok());
+        assert!(resolve("devin", "gpt-5.5", "", &None).is_err());
     }
 
     #[test]

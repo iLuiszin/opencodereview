@@ -39,6 +39,7 @@ pub(crate) fn route(request: Request, state: SharedState) -> Response {
         ("POST", "/auth/cursor/start") => start_cursor_auth(&request, &state),
         ("GET", "/auth/cursor/events") => cursor_auth_events(&request),
         ("POST", "/auth/cursor/cancel") => cancel_cursor_auth(&request),
+        ("POST", "/auth/devin/credentials") => save_devin_credentials(&request, &state),
         ("GET", "/accounts") => list_accounts(&state),
         ("POST", "/accounts/order") => reorder_accounts(&request, &state),
         ("GET", "/review-engines") => review_engines(&state),
