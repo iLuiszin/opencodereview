@@ -1,7 +1,52 @@
 use super::*;
 
+fn valid_reviewed_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= 128
+        && branch != "@"
+        && !branch.starts_with("refs/")
+        && !branch.starts_with('-')
+        && !branch.starts_with('/')
+        && !branch.ends_with('/')
+        && !branch.ends_with('.')
+        && !branch.contains("//")
+        && !branch.contains("..")
+        && !branch.contains("@{")
+        && branch
+            .bytes()
+            .all(|byte| byte > b' ' && byte != 0x7f && !matches!(byte, b'~' | b'^' | b':' | b'?' | b'*' | b'[' | b'\\'))
+        && branch
+            .split('/')
+            .all(|component| !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock"))
+}
+
+fn normalized_reviewed_branch(raw: &str) -> Option<String> {
+    let branch = raw.trim().strip_prefix("origin/").unwrap_or(raw.trim());
+    valid_reviewed_branch(branch).then(|| branch.to_string())
+}
+
+fn dedupe_reviewed_branches(branches: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    branches
+        .into_iter()
+        .filter(|branch| seen.insert(branch.clone()))
+        .collect()
+}
+
 fn reviewed_branches(raw: String) -> Vec<String> {
-    serde_json::from_str(&raw).unwrap_or_default()
+    let branches: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
+    dedupe_reviewed_branches(branches.iter().filter_map(|branch| normalized_reviewed_branch(branch)))
+}
+
+fn validate_reviewed_branches(branches: &[String]) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    for raw in branches {
+        let Some(branch) = normalized_reviewed_branch(raw) else {
+            return Err(format!("Invalid reviewed branch `{raw}`"));
+        };
+        normalized.push(branch);
+    }
+    Ok(dedupe_reviewed_branches(normalized))
 }
 
 impl Database {
@@ -392,7 +437,8 @@ impl Database {
     }
 
     pub fn save_repo_reviewed_branches(&self, repo_id: i64, branches: &[String]) -> Result<(), String> {
-        let branches = serde_json::to_string(branches).map_err(|error| error.to_string())?;
+        let branches =
+            serde_json::to_string(&validate_reviewed_branches(branches)?).map_err(|error| error.to_string())?;
         self.conn
             .execute(
                 "INSERT INTO subscriptions (repo_id, enabled, review_mode, review_reviewed_branches, created_at, updated_at)
@@ -487,5 +533,35 @@ impl Database {
       params![now_millis(), login],
     ).map_err(|error| error.to_string())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod reviewed_branch_tests {
+    #[test]
+    fn reviewed_branches_are_normalized_deduped_and_validated() {
+        let branches = vec![
+            " integration ".to_string(),
+            "origin/integration".to_string(),
+            "release/2026".to_string(),
+        ];
+        assert_eq!(
+            super::validate_reviewed_branches(&branches).unwrap(),
+            vec!["integration".to_string(), "release/2026".to_string()]
+        );
+        for invalid in [
+            "",
+            "bad branch",
+            "bad..branch",
+            "/integration",
+            "integration/",
+            "-bad",
+            "refs/heads/main",
+        ] {
+            assert!(
+                super::validate_reviewed_branches(&[invalid.to_string()]).is_err(),
+                "{invalid}"
+            );
+        }
     }
 }

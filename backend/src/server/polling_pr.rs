@@ -130,10 +130,10 @@ fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhP
     }
     let cancel = AtomicBool::new(false);
     let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
-    let head = crate::review::fetch_pr_head(&repo_path, pr.number, &cancel).ok()?;
-    if head != pr.head_ref_oid {
+    if !crate::review::rev_exists(&repo_path, &pr.head_ref_oid, &cancel) {
         return None;
     }
+    let head = pr.head_ref_oid.clone();
     let base_ref = pr.base_ref_name.as_deref()?;
     let base_rev = crate::review::resolve_base_rev(&repo_path, base_ref, &cancel).ok()?;
     let current_scope = crate::review::scope::ReviewScope {
@@ -169,11 +169,15 @@ fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhP
         }
         _ => prefix.base_sha,
     };
-    let count = crate::review::changed_file_targets_local(&repo_path, &format!("{count_base}..{head}"), &cancel)
-        .ok()?
-        .iter()
-        .filter(|path| crate::review::counts_toward_file_limit(path))
-        .count() as i64;
+    let full_pr_files =
+        crate::review::changed_files_local(&repo_path, &format!("{base_rev}...{head}"), &cancel).ok()?;
+    let count = crate::review::reviewable_file_count_in_range(
+        &repo_path,
+        &format!("{count_base}..{head}"),
+        &full_pr_files,
+        &cancel,
+    )
+    .ok()? as i64;
     Some(FileCount {
         count,
         reviewable: true,
@@ -201,7 +205,10 @@ pub(crate) fn poll_one_pr(
             .as_deref()
             .is_some_and(|base| !base.is_empty() && base != default)
     });
-    let file_count = reviewed_branch_file_count(state, repo, pr)
+    let file_count = pr
+        .changed_files
+        .filter(|count| *count > settings.review_max_files)
+        .and_then(|_| reviewed_branch_file_count(state, repo, pr))
         .or_else(|| file_count_for_limit(state, repo, pr, settings.review_max_files, list_pr_files));
     let too_many_files = file_count.is_some_and(|files| files.count > settings.review_max_files);
     let computed_lane = author_activation_lane(

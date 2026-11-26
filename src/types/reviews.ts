@@ -136,6 +136,7 @@ export interface ReviewRun {
   model: string | null;
   contextIndexSha: string | null;
   reviewedHeadSha: string | null;
+  scopeNote: string | null;
 }
 
 export interface ReviewProgressSnapshot {

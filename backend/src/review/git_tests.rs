@@ -184,7 +184,7 @@ fn reviewed_prefix_skips_only_the_already_reviewed_prefix() {
     let (root, clone, base, reviewed) = reviewed_prefix_fixture("prefix");
     run(&clone, &["checkout", "-q", "--detach", &base]);
     run(&clone, &["cherry-pick", &reviewed]);
-    run(&clone, &["cherry-pick", "origin/integration~0"]);
+    run(&clone, &["cherry-pick", "origin/integration"]);
     let prefix_head = run(&clone, &["rev-parse", "HEAD"]);
     let head = commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
     let cancel = AtomicBool::new(false);
@@ -219,6 +219,32 @@ fn reviewed_prefix_stops_before_a_matching_commit_after_new_work() {
 }
 
 #[test]
+fn whitespace_semantic_patch_id_matches_do_not_count_as_reviewed() {
+    let (root, clone, base, _) = reviewed_prefix_fixture("whitespace");
+    let origin = root.join("origin");
+    run(&origin, &["checkout", "-q", "integration"]);
+    fs::write(origin.join("semantic.py"), "def f():\n    return 1\n").unwrap();
+    run(&origin, &["add", "semantic.py"]);
+    run(&origin, &["commit", "-q", "-m", "reviewed python"]);
+    run(&origin, &["checkout", "-q", "main"]);
+    run(&clone, &["checkout", "-q", "--detach", &base]);
+    fs::write(clone.join("semantic.py"), "def f():\n  return 1\n").unwrap();
+    run(&clone, &["add", "semantic.py"]);
+    run(&clone, &["commit", "-q", "-m", "whitespace semantic change"]);
+    let head = run(&clone, &["rev-parse", "HEAD"]);
+    let prefix = crate::review::scope::reviewed_prefix(
+        &clone,
+        &["integration".to_string()],
+        &base,
+        &head,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prefix, None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn reviewed_prefix_is_empty_without_setting_and_full_on_git_failure() {
     let (root, clone, base, _) = reviewed_prefix_fixture("fallback");
     run(&clone, &["checkout", "-q", "--detach", &base]);
@@ -234,6 +260,49 @@ fn reviewed_prefix_is_empty_without_setting_and_full_on_git_failure() {
         None
     );
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn file_limit_count_intersects_the_pr_net_diff_after_a_base_merge() {
+    let repo = std::env::temp_dir().join(format!(
+        "ocr-file-limit-merge-{}-{}",
+        std::process::id(),
+        crate::db::now_millis()
+    ));
+    fs::create_dir_all(&repo).unwrap();
+    run(&repo, &["init", "-q", "-b", "main"]);
+    run(&repo, &["config", "user.email", "test@example.invalid"]);
+    run(&repo, &["config", "user.name", "Test"]);
+    fs::write(repo.join("base.txt"), "base\n").unwrap();
+    run(&repo, &["add", "."]);
+    run(&repo, &["commit", "-q", "-m", "base"]);
+    run(&repo, &["checkout", "-q", "-b", "feature"]);
+    fs::write(repo.join("reviewed.rs"), "fn reviewed() {}\n").unwrap();
+    run(&repo, &["add", "reviewed.rs"]);
+    run(&repo, &["commit", "-q", "-m", "reviewed work"]);
+    let reviewed = run(&repo, &["rev-parse", "HEAD"]);
+    run(&repo, &["checkout", "-q", "main"]);
+    fs::write(repo.join("main-only.rs"), "fn main_only() {}\n").unwrap();
+    run(&repo, &["add", "main-only.rs"]);
+    run(&repo, &["commit", "-q", "-m", "base work"]);
+    let base_tip = run(&repo, &["rev-parse", "HEAD"]);
+    run(&repo, &["checkout", "-q", "feature"]);
+    run(&repo, &["merge", "--no-ff", "-q", "main", "-m", "sync base"]);
+    fs::write(repo.join("new.rs"), "fn new() {}\n").unwrap();
+    run(&repo, &["add", "new.rs"]);
+    run(&repo, &["commit", "-q", "-m", "new work"]);
+    let head = run(&repo, &["rev-parse", "HEAD"]);
+    let cancel = AtomicBool::new(false);
+    let raw = changed_file_targets_local(&repo, &format!("{reviewed}..{head}"), &cancel).unwrap();
+    assert!(raw.iter().any(|path| path == "main-only.rs"), "{raw:?}");
+    let full_files = changed_files_local(&repo, &format!("{base_tip}...{head}"), &cancel).unwrap();
+    assert!(!full_files.iter().any(|path| path == "main-only.rs"), "{full_files:?}");
+    assert_eq!(
+        crate::review::reviewable_file_count_in_range(&repo, &format!("{reviewed}..{head}"), &full_files, &cancel)
+            .unwrap(),
+        1
+    );
+    let _ = fs::remove_dir_all(repo);
 }
 
 #[test]

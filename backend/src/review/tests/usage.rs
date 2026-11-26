@@ -123,6 +123,16 @@ fn force_full_reviews_bypass_persisted_coverage() {
 }
 
 #[test]
+fn force_full_reviews_bypass_reviewed_prefixes() {
+    let mut inputs = review_inputs("economic", 20, 5);
+    assert!(!super::should_use_reviewed_prefix(&inputs));
+    inputs.review_reviewed_branches = vec!["integration".to_string()];
+    assert!(super::should_use_reviewed_prefix(&inputs));
+    inputs.force_full = true;
+    assert!(!super::should_use_reviewed_prefix(&inputs));
+}
+
+#[test]
 fn review_context_uses_the_pinned_head_graph() {
     let root = super::make_run_dir(-782).unwrap();
     let repo = root.join("repo");
@@ -1791,6 +1801,7 @@ fn repair_diagnostic_final(
         comments_json: Some(comments),
         usage,
         no_new_changes: false,
+        scope_note: None,
     })
 }
 

@@ -9,6 +9,18 @@ release by a nightly job that runs the backend tests before it deploys anything.
 - **`review_quiet_seconds` waits for a quiet head.** An automatic review starts only once the pull
   request's head has stayed the same for that many seconds (0 to 3600; 0, the default, is off), so
   a burst of pushes is reviewed once, on its last head.
+- **Reviewed branches narrow a PR to its unreviewed prefix.** A repository subscription may carry
+  `review_reviewed_branches` (validated branch names, deduplicated; `origin/` is normalized away).
+  Before inference, exact merge-commit ancestry and exact patch equality against those branches drop
+  an already reviewed first-parent prefix from incremental scope and from the file-limit count.
+  Whitespace-insensitive `git cherry` patch ids only nominate candidates; whitespace-semantic changes
+  are still reviewed, Re-run full always uses the whole PR diff, and merge-in target-branch files do
+  not count because the range is intersected with the PR's net diff. The scope note is stored on the
+  review run and carried separately into result comments.
+- **Skipped reviews publish a machine-readable result comment.** A head skipped because it exceeds
+  the file limit or every file is excluded from evidence reserves a `state=skipped` result with a
+  `reason=` field and updates the same owned comment on later heads. Keyword skips stay silent, and a
+  non-skipped result already recorded for the same head is never overwritten by a skip.
 - **A `devin` provider runs reviews on Devin SWE.** Same account model as the other providers
   (credential `devin/credentials.toml`, pasted from a `devin auth login` in Settings → Providers,
   stored rebuilt to hold only the API key and the fixed endpoint URLs; models `swe-high` and

@@ -119,9 +119,84 @@ fn merge_commit(repo: &Path, sha: &str, cancel: &AtomicBool) -> Result<bool, Str
     Ok(fields.split_whitespace().count() > 2)
 }
 
+fn ordinary_commits(repo: &Path, base: &str, upstream: &str, cancel: &AtomicBool) -> Result<Vec<String>, String> {
+    let range = format!("{base}..{upstream}");
+    let output = crate::review::git_capture(repo, &["rev-list", "--parents", &range], cancel, 60)?;
+    let output = String::from_utf8(output).map_err(|error| error.to_string())?;
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            (fields.len() == 2).then(|| fields[0].to_string())
+        })
+        .collect())
+}
+
+/// The exact patch a commit applies, as the object ids and modes of every touched path. `git cherry`'s
+/// patch id deliberately ignores whitespace, so it is only a candidate filter: whitespace is semantic
+/// in Python, YAML and Makefiles, and a patch-id match still has to carry the same blob changes here.
+fn commit_patch_signature(repo: &Path, sha: &str, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
+    crate::review::git_capture(
+        repo,
+        &[
+            "diff-tree",
+            "--root",
+            "-r",
+            "--no-commit-id",
+            "--no-renames",
+            "--full-index",
+            "-z",
+            sha,
+        ],
+        cancel,
+        30,
+    )
+}
+
+struct ReviewedUpstream {
+    branch: String,
+    upstream: String,
+    patch_equivalent: std::collections::HashSet<String>,
+    ordinary_commits: Vec<String>,
+    patch_signatures: std::collections::HashMap<String, Vec<u8>>,
+}
+
+impl ReviewedUpstream {
+    fn load(repo: &Path, branch: &str, base: &str, head: &str, cancel: &AtomicBool) -> Result<Self, String> {
+        crate::review::fetch_base(repo, branch, cancel)?;
+        let upstream = crate::review::remote_base(branch);
+        Ok(Self {
+            branch: branch.to_string(),
+            patch_equivalent: cherry_equivalent_commits(repo, &upstream, base, head, cancel)?,
+            ordinary_commits: ordinary_commits(repo, base, &upstream, cancel)?,
+            upstream,
+            patch_signatures: std::collections::HashMap::new(),
+        })
+    }
+
+    fn exact_patch_match(&mut self, repo: &Path, candidate: &str, cancel: &AtomicBool) -> Result<bool, String> {
+        if !self.patch_equivalent.contains(candidate) {
+            return Ok(false);
+        }
+        let wanted = commit_patch_signature(repo, candidate, cancel)?;
+        for index in 0..self.ordinary_commits.len() {
+            let commit = self.ordinary_commits[index].clone();
+            if !self.patch_signatures.contains_key(&commit) {
+                let signature = commit_patch_signature(repo, &commit, cancel)?;
+                self.patch_signatures.insert(commit.clone(), signature);
+            }
+            if self.patch_signatures.get(&commit) == Some(&wanted) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
 /// Newest first-parent commit since `base` whose whole prefix is already present, by exact SHA for
-/// merge commits or by stable patch equivalence (`git cherry`) for ordinary commits, on one of
-/// `branches`. The branches are fetched first so their remote-tracking refs are current.
+/// merge commits or by an exactly equal patch for ordinary commits, on one of `branches`. `git cherry`
+/// only nominates patch-equivalent candidates; its whitespace-insensitive patch id never suffices on
+/// its own. The branches are fetched first so their remote-tracking refs are current.
 pub(crate) fn reviewed_prefix(
     repo: &Path,
     branches: &[String],
@@ -136,8 +211,7 @@ pub(crate) fn reviewed_prefix(
         .map(|branch| branch.trim())
         .filter(|branch| !branch.is_empty())
     {
-        crate::review::fetch_base(repo, branch, cancel)?;
-        upstreams.push((branch.to_string(), crate::review::remote_base(branch)));
+        upstreams.push(ReviewedUpstream::load(repo, branch, base, head, cancel)?);
     }
     if upstreams.is_empty() {
         return Ok(None);
@@ -146,30 +220,23 @@ pub(crate) fn reviewed_prefix(
     if chain.is_empty() {
         return Ok(None);
     }
-    let mut cherry = Vec::new();
-    for (branch, upstream) in &upstreams {
-        cherry.push((
-            branch.clone(),
-            upstream.clone(),
-            cherry_equivalent_commits(repo, upstream, base, head, cancel)?,
-        ));
-    }
     let mut newest = None::<(String, usize, String)>;
     for (index, sha) in chain.iter().enumerate() {
-        let branch = if merge_commit(repo, sha, cancel)? {
-            upstreams
-                .iter()
-                .find(|(_, upstream)| crate::review::is_ancestor(repo, sha, upstream, cancel))
-                .map(|(branch, _)| branch.clone())
-        } else {
-            cherry
-                .iter()
-                .find(|(_, upstream, equivalent)| {
-                    crate::review::is_ancestor(repo, sha, upstream, cancel) || equivalent.contains(sha)
-                })
-                .map(|(branch, _, _)| branch.clone())
-        };
-        let Some(branch) = branch else {
+        let mut matching_branch = None;
+        let merge = merge_commit(repo, sha, cancel)?;
+        for upstream in &mut upstreams {
+            let matched = if merge {
+                crate::review::is_ancestor(repo, sha, &upstream.upstream, cancel)
+            } else {
+                crate::review::is_ancestor(repo, sha, &upstream.upstream, cancel)
+                    || upstream.exact_patch_match(repo, sha, cancel)?
+            };
+            if matched {
+                matching_branch = Some(upstream.branch.clone());
+                break;
+            }
+        }
+        let Some(branch) = matching_branch else {
             break;
         };
         newest = Some((sha.clone(), index + 1, branch));

@@ -525,6 +525,7 @@ fn diagnostic_restore_preserves_chunk_warnings_when_final_has_none() {
         usage: RunUsage::default(),
         risk: empty_review_risk(),
         no_new_changes: false,
+        scope_note: None,
     };
     super::diagnostics::retain_chunk_warnings(&mut output, &results);
     super::diagnostics::retain_chunk_warnings(&mut output, &results);

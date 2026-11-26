@@ -17,6 +17,20 @@ pub(crate) fn incremental_review_changes(
     Ok((changed, diff))
 }
 
+/// Files in `range` that the review limit counts, restricted to the pull request's net diff. A
+/// range such as `reviewed_prefix..head` otherwise counts target-branch files that entered the head
+/// through a merge even though they are not part of the PR.
+pub(crate) fn reviewable_file_count_in_range(
+    repo: &Path,
+    range: &str,
+    full_files: &[String],
+    cancel: &AtomicBool,
+) -> Result<usize, String> {
+    let mut changed = changed_file_targets_local(repo, range, cancel)?;
+    changed.retain(|path| full_files.contains(path));
+    Ok(changed.iter().filter(|path| counts_toward_file_limit(path)).count())
+}
+
 #[cfg(test)]
 pub(crate) fn incremental_diff_is_publishable(diff: &str, full_diff: &str) -> bool {
     let published = diff_anchor_lines(full_diff);

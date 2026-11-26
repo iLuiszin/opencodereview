@@ -302,6 +302,7 @@ pub struct ReviewRun {
     pub model: Option<String>,
     pub context_index_sha: Option<String>,
     pub reviewed_head_sha: Option<String>,
+    pub scope_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

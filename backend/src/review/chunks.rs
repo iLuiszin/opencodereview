@@ -441,6 +441,7 @@ pub(crate) fn run_sharded_review(
         usage,
         risk,
         no_new_changes: false,
+        scope_note: None,
     })
 }
 
@@ -580,6 +581,7 @@ pub(crate) fn run_adaptive_final(
         usage,
         risk,
         no_new_changes: false,
+        scope_note: None,
     })
 }
 

@@ -318,6 +318,7 @@ fn review_run(body: Option<&str>, comments_json: Option<&str>) -> crate::db::Rev
         model: None,
         context_index_sha: None,
         reviewed_head_sha: None,
+        scope_note: None,
     }
 }
 
@@ -679,6 +680,39 @@ fn skipped_result_reservation_is_machine_readable_and_head_scoped() {
     .unwrap();
     assert_eq!(second.id, first.id);
     assert_eq!(second.run_id, first.run_id);
+
+    let clean = db
+        .reserve_review_result(&crate::db::ReviewResultInput {
+            pr_id,
+            run_id: first.run_id.unwrap(),
+            actionable_run_id: None,
+            observed_head_sha: &head_one,
+            reviewed_head_sha: &head_one,
+            prior_result_state: None,
+            prior_result_head_sha: None,
+            observation: "clean",
+            effective_state: "clean",
+            publication_status: "disabled",
+            body: Some("clean result"),
+            github_review_id: None,
+            github_review_url: None,
+            reviewer_version: "test",
+            skill_version: "test",
+        })
+        .unwrap();
+    let protected = reserve_skipped_review_result(
+        &db,
+        pr_id,
+        None,
+        "acme/fixture",
+        7,
+        "file-limit",
+        "Skipped: 301 reviewable changed files exceeds the 300-file review limit",
+    )
+    .unwrap();
+    assert_eq!(protected.id, clean.id);
+    assert_eq!(protected.effective_state, "clean");
+    assert_eq!(protected.body.as_deref(), Some("clean result"));
 
     let head_two = "2".repeat(40);
     upsert(&head_two);

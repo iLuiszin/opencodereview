@@ -248,6 +248,10 @@ pub(crate) fn should_reuse_review_coverage(inputs: &ReviewInputs) -> bool {
     !inputs.force_full
 }
 
+pub(crate) fn should_use_reviewed_prefix(inputs: &ReviewInputs) -> bool {
+    !inputs.force_full && !inputs.review_reviewed_branches.is_empty()
+}
+
 pub(crate) fn should_reuse_chunk_results(inputs: &ReviewInputs) -> bool {
     !inputs.force_full && !inputs.reprocess
 }
@@ -259,6 +263,7 @@ pub struct ReviewOutput {
     pub usage: RunUsage,
     pub risk: ReviewRisk,
     pub no_new_changes: bool,
+    pub scope_note: Option<String>,
 }
 
 /// Per-model token usage within a run.

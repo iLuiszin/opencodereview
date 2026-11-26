@@ -203,7 +203,7 @@ impl Database {
 
     pub fn latest_review_run(&self, pr_id: i64) -> Result<Option<ReviewRun>, String> {
         let mut stmt = self.conn.prepare(
-      "SELECT id, pr_id, status, head_sha, review_body, comments_json, risk_score, risk_level, risk_json, error_message, phase_json, tail, started_at, finished_at, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, usage_model, model, context_index_sha, reviewed_head_sha
+      "SELECT id, pr_id, status, head_sha, review_body, comments_json, risk_score, risk_level, risk_json, error_message, phase_json, tail, started_at, finished_at, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, usage_model, model, context_index_sha, reviewed_head_sha, scope_note
        FROM review_runs WHERE pr_id = $1
        ORDER BY CASE
          WHEN (SELECT review_lane FROM pull_requests WHERE id = $1) = 'ready'
@@ -237,6 +237,7 @@ impl Database {
                 model: row.get(20).map_err(|error| error.to_string())?,
                 context_index_sha: row.get(21).map_err(|error| error.to_string())?,
                 reviewed_head_sha: row.get(22).map_err(|error| error.to_string())?,
+                scope_note: row.get(23).map_err(|error| error.to_string())?,
             }))
         } else {
             Ok(None)
@@ -274,7 +275,7 @@ impl Database {
 
     pub fn review_run_by_id(&self, run_id: i64) -> Result<Option<ReviewRun>, String> {
         let mut stmt = self.conn.prepare(
-      "SELECT id, pr_id, status, head_sha, review_body, comments_json, risk_score, risk_level, risk_json, error_message, phase_json, tail, started_at, finished_at, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, usage_model, model, context_index_sha, reviewed_head_sha
+      "SELECT id, pr_id, status, head_sha, review_body, comments_json, risk_score, risk_level, risk_json, error_message, phase_json, tail, started_at, finished_at, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, usage_model, model, context_index_sha, reviewed_head_sha, scope_note
        FROM review_runs WHERE id = $1",
     ).map_err(|error| error.to_string())?;
         let mut rows = stmt.query(params![run_id]).map_err(|error| error.to_string())?;
@@ -303,6 +304,7 @@ impl Database {
                 model: row.get(20).map_err(|error| error.to_string())?,
                 context_index_sha: row.get(21).map_err(|error| error.to_string())?,
                 reviewed_head_sha: row.get(22).map_err(|error| error.to_string())?,
+                scope_note: row.get(23).map_err(|error| error.to_string())?,
             }))
         } else {
             Ok(None)
@@ -311,7 +313,7 @@ impl Database {
 
     pub fn review_runs_for_pr(&self, pr_id: i64) -> Result<Vec<ReviewRun>, String> {
         let mut stmt = self.conn.prepare(
-      "SELECT id, pr_id, status, head_sha, review_body, comments_json, risk_score, risk_level, risk_json, error_message, phase_json, tail, started_at, finished_at, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, usage_model, model, context_index_sha, reviewed_head_sha
+      "SELECT id, pr_id, status, head_sha, review_body, comments_json, risk_score, risk_level, risk_json, error_message, phase_json, tail, started_at, finished_at, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, usage_model, model, context_index_sha, reviewed_head_sha, scope_note
        FROM review_runs WHERE pr_id = $1 ORDER BY created_at DESC",
     ).map_err(|error| error.to_string())?;
         let rows = stmt
@@ -340,6 +342,7 @@ impl Database {
                     model: row.get(20)?,
                     context_index_sha: row.get(21)?,
                     reviewed_head_sha: row.get(22)?,
+                    scope_note: row.get(23)?,
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -538,6 +541,16 @@ impl Database {
     ).map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(changed > 0)
+    }
+
+    pub fn set_review_run_scope_note(&self, run_id: i64, scope_note: Option<&str>) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE review_runs SET scope_note = $1, updated_at = $2 WHERE id = $3",
+                params![scope_note, now_millis(), run_id],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     pub fn set_review_run_comments_json(&self, run_id: i64, comments_json: &str) -> Result<(), String> {

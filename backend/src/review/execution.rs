@@ -174,13 +174,17 @@ pub(crate) fn run_inner(
             crate::review::scope::can_review_incrementally(&inputs.repo_path, prior, &current_scope, cancel)
         })
         .map(|prior| prior.head_sha.as_str());
-    let reviewed_prefix = crate::review::scope::reviewed_prefix_or_full(
-        &inputs.repo_path,
-        &inputs.review_reviewed_branches,
-        &merge_base_sha,
-        &head_sha,
-        cancel,
-    )?;
+    let reviewed_prefix = if !crate::review::should_use_reviewed_prefix(inputs) {
+        None
+    } else {
+        crate::review::scope::reviewed_prefix_or_full(
+            &inputs.repo_path,
+            &inputs.review_reviewed_branches,
+            &merge_base_sha,
+            &head_sha,
+            cancel,
+        )?
+    };
     let reviewed_count_base = reviewed_prefix.as_ref().map(|prefix| match historical_prior_head {
         Some(prior)
             if prior != prefix.base_sha
@@ -211,10 +215,8 @@ pub(crate) fn run_inner(
         .as_ref()
         .map(|base| format!("{base}..{head_sha}"))
         .unwrap_or_else(|| full_pr_range.clone());
-    let reviewable_file_count = changed_file_targets_local(&inputs.repo_path, &file_limit_range, cancel)?
-        .iter()
-        .filter(|path| crate::review::counts_toward_file_limit(path))
-        .count();
+    let reviewable_file_count =
+        crate::review::reviewable_file_count_in_range(&inputs.repo_path, &file_limit_range, &full_pr_changed, cancel)?;
     let db = inputs.open_db()?;
     db.set_pr_changed_file_count(inputs.pr_id, Some(reviewable_file_count as i64))?;
     let max_files = db.settings()?.review_max_files;
@@ -558,6 +560,7 @@ pub(crate) fn run_inner(
             &excluded,
             &risk_plan,
             &full_pr_diff,
+            reviewed_scope_note.as_deref(),
         ));
     }
 
@@ -674,6 +677,7 @@ pub(crate) fn run_inner(
                 &excluded,
                 &risk_plan,
                 &full_pr_diff,
+                reviewed_scope_note.as_deref(),
             ));
         }
         let sample = changed.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
@@ -735,6 +739,7 @@ pub(crate) fn run_inner(
             output.body.push_str("\n\n");
             output.body.push_str(note);
         }
+        output.scope_note = reviewed_scope_note.clone();
         output.evidence_warnings.extend(deferred_files_warning(&deferred));
         progress(&sharded_phase_json("ready", "ok"), "Sharded review ready for approval.");
         return Ok(output);
@@ -951,6 +956,7 @@ pub(crate) fn run_inner(
         usage,
         risk,
         no_new_changes: false,
+        scope_note: reviewed_scope_note,
     })
 }
 
@@ -965,19 +971,26 @@ fn preserved_outcome(
     excluded: &str,
     risk_plan: &crate::db::ReviewContextPlan,
     full_pr_diff: &str,
+    scope_note: Option<&str>,
 ) -> ReviewOutput {
     let pending = inputs.unresolved_review_body.as_deref().map(|body| format!("\n\nPreviously pending review\nThis PR still has an unresolved generated review from `{}`. Keep it in mind before marking this PR reviewed.\n\n{}", inputs.unresolved_review_head.as_deref().unwrap_or("previous head"), body.trim())).unwrap_or_default();
     let comments_json = format!(r#"{{"commit_id":"{head_sha}","comments":[]}}"#);
+    let mut body = format!(
+        "fe-review report — PR #{} incremental re-review\n\nSummary\n- Head SHA: {head_sha}\n- No new reviewable PR-owned changes; unchanged files reuse verified coverage.\n- No model executed and no new findings were validated.\n\nPolicy exclusions (not reviewed){excluded}\n\nClosing\n- Previous review outcome preserved; this is not a new clean review.{pending}",
+        inputs.number,
+    );
+    if let Some(note) = scope_note {
+        body.push_str("\n\n");
+        body.push_str(note);
+    }
     ReviewOutput {
-        body: format!(
-            "fe-review report — PR #{} incremental re-review\n\nSummary\n- Head SHA: {head_sha}\n- No new reviewable PR-owned changes; unchanged files reuse verified coverage.\n- No model executed and no new findings were validated.\n\nPolicy exclusions (not reviewed){excluded}\n\nClosing\n- Previous review outcome preserved; this is not a new clean review.{pending}",
-            inputs.number,
-        ),
+        body,
         risk: score_review_risk(risk_plan, full_pr_diff, Some(comments_json.as_str())),
         comments_json: Some(comments_json),
         evidence_warnings: Vec::new(),
         usage: RunUsage::default(),
         no_new_changes: true,
+        scope_note: scope_note.map(str::to_string),
     }
 }
 

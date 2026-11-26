@@ -157,12 +157,6 @@ pub(crate) fn review_result_body(
     format!("{key}\n{data}\n{run_marker}\n\n{visible}\n\n{}", ocr_footer())
 }
 
-pub(crate) fn reviewed_scope_note_in_body(body: Option<&str>) -> Option<&str> {
-    body?
-        .lines()
-        .find(|line| line.starts_with("Reviewed `") && line.contains(" commits already on "))
-}
-
 pub(crate) fn reserve_effective_review_result(
     db: &Database,
     run: &crate::db::ReviewRun,
@@ -198,7 +192,7 @@ pub(crate) fn reserve_effective_review_result(
                 .flatten(),
             &reviewer_version,
             &skill_version,
-            reviewed_scope_note_in_body(run.review_body.as_deref()),
+            run.scope_note.as_deref(),
             &evidence_warnings,
         )
     });
@@ -593,7 +587,7 @@ pub(crate) fn reserve_skipped_review_result(
 ) -> Result<ReviewResult, String> {
     let (_, _, _, head_sha) = db.pr_review_coords(pr_id)?;
     if let Some(existing) = db.review_result(pr_id)? {
-        if existing.observed_head_sha == head_sha && existing.effective_state == "skipped" {
+        if existing.observed_head_sha == head_sha {
             return Ok(existing);
         }
     }
@@ -653,7 +647,7 @@ pub(crate) fn publish_skipped_review_result(
     detail: &str,
 ) -> Result<(), String> {
     let result = reserve_skipped_review_result(db, pr_id, existing_run_id, full_name, number, reason, detail)?;
-    if matches!(result.publication_status.as_str(), "pending" | "failed") {
+    if result.effective_state == "skipped" && matches!(result.publication_status.as_str(), "pending" | "failed") {
         publish_effective_review_result(db, &result, full_name, number, repo_path)?;
     }
     Ok(())
@@ -934,6 +928,7 @@ pub(crate) fn run_review_job(
             }
             Ok(output) => {
                 let _ = db.set_review_run_risk(run_id, &output.risk);
+                let _ = db.set_review_run_scope_note(run_id, output.scope_note.as_deref());
                 let u = &output.usage;
                 let _ = db.set_review_run_usage(
                     run_id,
