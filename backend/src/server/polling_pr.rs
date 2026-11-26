@@ -124,13 +124,21 @@ pub(crate) fn file_count_for_limit(
 
 /// The review-limit count after removing the prefix already reviewed on the repository's
 /// reviewed branches. `None` means the ordinary GitHub file count policy applies unchanged.
-fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhPullRequest) -> Option<FileCount> {
+/// The head of a pull request never reviewed here is unfetched; it is fetched under a
+/// private temporary ref, deleted right after use, never a durable `refs/ocr/pr-N` ref.
+pub(crate) fn reviewed_branch_file_count(
+    state: &SharedState,
+    repo: &Repo,
+    pr: &github::GhPullRequest,
+) -> Option<FileCount> {
     if repo.review_reviewed_branches.is_empty() {
         return None;
     }
     let cancel = AtomicBool::new(false);
     let repo_path = state.config.repos_dir.join(&repo.owner).join(&repo.name);
-    if !crate::review::rev_exists(&repo_path, &pr.head_ref_oid, &cancel) {
+    if !crate::review::rev_exists(&repo_path, &pr.head_ref_oid, &cancel)
+        && crate::review::fetch_pr_head_temporary(&repo_path, pr.number, &pr.head_ref_oid, &cancel).is_err()
+    {
         return None;
     }
     let head = pr.head_ref_oid.clone();
@@ -142,15 +150,6 @@ fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhP
         base_sha: base_rev.clone(),
     };
     let merge_base = crate::review::scope::merge_base(&repo_path, &base_rev, &head, &cancel).ok()?;
-    let prefix = crate::review::scope::reviewed_prefix_or_full(
-        &repo_path,
-        &repo.review_reviewed_branches,
-        &merge_base,
-        &head,
-        &cancel,
-    )
-    .ok()
-    .flatten()?;
     let prior_head = with_db_read_raw(state, |db| {
         let prior = db.pr_scope(repo.id, pr.number)?;
         let last = db.last_reviewed_sha_for_number(repo.id, pr.number)?;
@@ -160,24 +159,21 @@ fn reviewed_branch_file_count(state: &SharedState, repo: &Repo, pr: &github::GhP
     .flatten()
     .filter(|prior| crate::review::scope::can_review_incrementally(&repo_path, prior, &current_scope, &cancel))
     .map(|scope| scope.head_sha);
-    let count_base = match prior_head {
-        Some(prior)
-            if prior != prefix.base_sha
-                && crate::review::is_ancestor(&repo_path, &prefix.base_sha, &prior, &cancel) =>
-        {
-            prior
-        }
-        _ => prefix.base_sha,
-    };
-    let full_pr_files =
-        crate::review::changed_files_local(&repo_path, &format!("{base_rev}...{head}"), &cancel).ok()?;
-    let count = crate::review::reviewable_file_count_in_range(
+    let count_base = crate::review::scope::reviewed_count_scope(
         &repo_path,
-        &format!("{count_base}..{head}"),
-        &full_pr_files,
+        &repo.review_reviewed_branches,
+        true,
+        &merge_base,
+        &head,
+        prior_head.as_deref(),
         &cancel,
     )
-    .ok()? as i64;
+    .ok()?
+    .count_base?;
+    let full_pr_range = format!("{base_rev}...{head}");
+    let full_pr_files = crate::review::changed_files_local(&repo_path, &full_pr_range, &cancel).ok()?;
+    let range = crate::review::scope::file_limit_range(&full_pr_range, Some(&count_base), &head);
+    let count = crate::review::reviewable_file_count_in_range(&repo_path, &range, &full_pr_files, &cancel).ok()? as i64;
     Some(FileCount {
         count,
         reviewable: true,

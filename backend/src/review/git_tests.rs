@@ -158,8 +158,8 @@ fn reviewed_prefix_fixture(test: &str) -> (PathBuf, PathBuf, String, String) {
     run(&origin, &["commit", "-q", "-m", "base"]);
     let base = run(&origin, &["rev-parse", "HEAD"]);
     run(&origin, &["checkout", "-q", "-b", "integration"]);
-    let reviewed = commit(&origin, "reviewed-one.txt", "one\n", "reviewed one");
-    commit(&origin, "reviewed-two.txt", "two\n", "reviewed two");
+    let reviewed = commit(&origin, "reviewed-one.rs", "fn one() {}\n", "reviewed one");
+    commit(&origin, "reviewed-two.rs", "fn two() {}\n", "reviewed two");
     run(&origin, &["checkout", "-q", "main"]);
     let output = Command::new("git")
         .args(["clone", "-q", &format!("file://{}", origin.display())])
@@ -303,6 +303,100 @@ fn file_limit_count_intersects_the_pr_net_diff_after_a_base_merge() {
         1
     );
     let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn force_full_counts_and_reviews_the_full_range_despite_a_matching_prefix() {
+    let (root, clone, base, reviewed) = reviewed_prefix_fixture("force-full");
+    run(&clone, &["checkout", "-q", "--detach", &base]);
+    run(&clone, &["cherry-pick", &reviewed]);
+    run(&clone, &["cherry-pick", "origin/integration"]);
+    let head = commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
+    let cancel = AtomicBool::new(false);
+    let branches = vec!["integration".to_string()];
+    let full_pr_range = format!("{base}...{head}");
+    let full_files = changed_files_local(&clone, &full_pr_range, &cancel).unwrap();
+
+    let narrowed =
+        crate::review::scope::reviewed_count_scope(&clone, &branches, true, &base, &head, None, &cancel).unwrap();
+    let prefix = narrowed.prefix.clone().expect("the matching prefix is detected");
+    let count_base = narrowed.count_base.clone().expect("the prefix is the count base");
+    assert_eq!(count_base, prefix.base_sha);
+    assert!(crate::review::scope::reviewed_prefix_in_use(
+        narrowed.prefix.as_ref(),
+        narrowed.count_base.as_deref()
+    ));
+    let narrowed_range = crate::review::scope::file_limit_range(&full_pr_range, Some(&count_base), &head);
+    assert_eq!(
+        crate::review::reviewable_file_count_in_range(&clone, &narrowed_range, &full_files, &cancel).unwrap(),
+        1,
+        "without force-full only the new file counts"
+    );
+
+    let forced =
+        crate::review::scope::reviewed_count_scope(&clone, &branches, false, &base, &head, None, &cancel).unwrap();
+    assert_eq!(forced.prefix, None, "force-full never detects a prefix");
+    assert_eq!(forced.count_base, None, "force-full never narrows the count base");
+    let forced_range = crate::review::scope::file_limit_range(&full_pr_range, forced.count_base.as_deref(), &head);
+    assert_eq!(
+        forced_range, full_pr_range,
+        "force-full reviews and counts the full range"
+    );
+    assert_eq!(
+        crate::review::reviewable_file_count_in_range(&clone, &forced_range, &full_files, &cancel).unwrap(),
+        3,
+        "the forced count covers both reviewed files and the new work"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn scope_note_is_emitted_only_when_the_reviewed_prefix_is_used() {
+    let (root, clone, base, reviewed) = reviewed_prefix_fixture("scope-note");
+    run(&clone, &["checkout", "-q", "--detach", &base]);
+    run(&clone, &["cherry-pick", &reviewed]);
+    run(&clone, &["cherry-pick", "origin/integration"]);
+    let prior = commit_in_clone(&clone, "middle.rs", "fn middle() {}\n", "middle work");
+    let head = commit_in_clone(&clone, "new.rs", "fn new() {}\n", "new work");
+    let cancel = AtomicBool::new(false);
+    let branches = vec!["integration".to_string()];
+
+    let scope =
+        crate::review::scope::reviewed_count_scope(&clone, &branches, true, &base, &head, None, &cancel).unwrap();
+    let note = crate::review::scope::reviewed_scope_note(
+        &clone,
+        scope.prefix.as_ref(),
+        scope.count_base.as_deref(),
+        &head,
+        &cancel,
+    )
+    .expect("the note fires while the prefix is the count base");
+    assert!(
+        note.contains("2 commits already on `integration` were skipped"),
+        "{note}"
+    );
+
+    // An incremental prior head newer than the prefix base displaces it: the review starts
+    // from the prior head, so the skipped-commits note would misreport what was reviewed.
+    let scope =
+        crate::review::scope::reviewed_count_scope(&clone, &branches, true, &base, &head, Some(&prior), &cancel)
+            .unwrap();
+    assert_eq!(scope.count_base.as_deref(), Some(prior.as_str()));
+    assert!(!crate::review::scope::reviewed_prefix_in_use(
+        scope.prefix.as_ref(),
+        scope.count_base.as_deref()
+    ));
+    assert_eq!(
+        crate::review::scope::reviewed_scope_note(
+            &clone,
+            scope.prefix.as_ref(),
+            scope.count_base.as_deref(),
+            &head,
+            &cancel,
+        ),
+        None
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

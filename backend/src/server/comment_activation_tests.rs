@@ -666,3 +666,82 @@ fn file_limit_counts_only_reviewable_files_and_remembers_them_per_revision() {
         None
     );
 }
+
+#[test]
+fn reviewed_branch_count_fetches_an_unfetched_head_under_a_temporary_ref() {
+    let f = Fixture::new("limit");
+    let state = fixture_state(&f);
+    let origin = f.root.join("origin");
+    let clone = f.root.join("repos").join("acme").join("repo");
+    std::fs::create_dir_all(&origin).unwrap();
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    git(&origin, &["init", "-q", "-b", "main"]);
+    git(&origin, &["config", "user.email", "test@example.invalid"]);
+    git(&origin, &["config", "user.name", "Test"]);
+    std::fs::write(origin.join("base.txt"), "base\n").unwrap();
+    git(&origin, &["add", "."]);
+    git(&origin, &["commit", "-q", "-m", "base"]);
+    let base = git(&origin, &["rev-parse", "HEAD"]);
+    git(&origin, &["checkout", "-q", "-b", "integration"]);
+    for (file, text, message) in [
+        ("reviewed-one.rs", "fn one() {}\n", "reviewed one"),
+        ("reviewed-two.rs", "fn two() {}\n", "reviewed two"),
+    ] {
+        std::fs::write(origin.join(file), text).unwrap();
+        git(&origin, &["add", file]);
+        git(&origin, &["commit", "-q", "-m", message]);
+    }
+    // The pull request cherry-picks the reviewed commits and adds new work; its commits are
+    // reachable only through refs/pull/7/head, which a clone never fetches.
+    git(&origin, &["checkout", "-q", "--detach", "main"]);
+    git(&origin, &["cherry-pick", "integration~1"]);
+    git(&origin, &["cherry-pick", "integration"]);
+    std::fs::write(origin.join("new.rs"), "fn new() {}\n").unwrap();
+    git(&origin, &["add", "new.rs"]);
+    git(&origin, &["commit", "-q", "-m", "new work"]);
+    let head = git(&origin, &["rev-parse", "HEAD"]);
+    git(&origin, &["update-ref", "refs/pull/7/head", &head]);
+    git(&origin, &["checkout", "-q", "main"]);
+    let output = std::process::Command::new("git")
+        .args(["clone", "-q", "--no-local", &format!("file://{}", origin.display())])
+        .arg(&clone)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let cancel = AtomicBool::new(false);
+    assert!(
+        !crate::review::rev_exists(&clone, &head, &cancel),
+        "the pull request head starts unfetched"
+    );
+    f.db.save_repo_reviewed_branches(1, &["integration".to_string()])
+        .unwrap();
+    let repo = f.db.repo_by_id(1).unwrap();
+    assert!(!repo.review_reviewed_branches.is_empty());
+    let mut pr = snapshot("Feature", &head, Some(40));
+    pr.base_ref_oid = Some(base);
+    let count = reviewed_branch_file_count(&state, &repo, &pr).expect("the fetched head is counted");
+    assert_eq!(
+        count,
+        FileCount {
+            count: 1,
+            reviewable: true
+        },
+        "only the new work counts once the reviewed prefix is skipped"
+    );
+    let refs = git(&clone, &["for-each-ref", "refs/ocr"]);
+    assert!(refs.is_empty(), "no durable or temporary review ref is left: {refs}");
+    assert!(crate::review::rev_exists(&clone, &head, &cancel));
+}

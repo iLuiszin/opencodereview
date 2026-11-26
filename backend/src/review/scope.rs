@@ -268,6 +268,88 @@ pub(crate) fn reviewed_prefix_or_full(
     }
 }
 
+/// The base the review-limit file count starts from when a reviewed prefix exists: the
+/// historical prior head when it is strictly newer than the prefix base, otherwise the
+/// prefix base. Only the latter means the prefix is what the review actually uses.
+pub(crate) fn reviewed_count_base(
+    repo: &Path,
+    prefix: &ReviewedPrefix,
+    prior_head: Option<&str>,
+    cancel: &AtomicBool,
+) -> String {
+    match prior_head {
+        Some(prior)
+            if prior != prefix.base_sha && crate::review::is_ancestor(repo, &prefix.base_sha, prior, cancel) =>
+        {
+            prior.to_string()
+        }
+        _ => prefix.base_sha.clone(),
+    }
+}
+
+/// Reviewed-prefix detection together with the count-base selection, shared by polling and
+/// review execution. `use_prefixes` is false for a forced full review, which skips detection
+/// entirely, so the review and its file-limit count both use the full pull request range even
+/// when the history holds a matching prefix.
+pub(crate) struct ReviewedCountScope {
+    pub prefix: Option<ReviewedPrefix>,
+    pub count_base: Option<String>,
+}
+
+pub(crate) fn reviewed_count_scope(
+    repo: &Path,
+    branches: &[String],
+    use_prefixes: bool,
+    merge_base: &str,
+    head: &str,
+    prior_head: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<ReviewedCountScope, String> {
+    if !use_prefixes || branches.is_empty() {
+        return Ok(ReviewedCountScope {
+            prefix: None,
+            count_base: None,
+        });
+    }
+    let prefix = reviewed_prefix_or_full(repo, branches, merge_base, head, cancel)?;
+    let count_base = prefix
+        .as_ref()
+        .map(|prefix| reviewed_count_base(repo, prefix, prior_head, cancel));
+    Ok(ReviewedCountScope { prefix, count_base })
+}
+
+/// The range the review-limit file count reads: the unreviewed remainder when there is a
+/// count base, the full pull request range otherwise.
+pub(crate) fn file_limit_range(full_pr_range: &str, count_base: Option<&str>, head: &str) -> String {
+    count_base
+        .map(|base| format!("{base}..{head}"))
+        .unwrap_or_else(|| full_pr_range.to_string())
+}
+
+/// Whether the reviewed prefix is what the review counts and starts from — false when an
+/// incremental prior head newer than the prefix base displaces it.
+pub(crate) fn reviewed_prefix_in_use(prefix: Option<&ReviewedPrefix>, count_base: Option<&str>) -> bool {
+    matches!((prefix, count_base), (Some(prefix), Some(base)) if base == prefix.base_sha)
+}
+
+/// The note about skipped reviewed-branch commits. It is emitted only while the prefix is
+/// actually in use: when a newer incremental prior head displaces it, the review starts from
+/// that head instead and the note would misreport what was skipped.
+pub(crate) fn reviewed_scope_note(
+    repo: &Path,
+    prefix: Option<&ReviewedPrefix>,
+    count_base: Option<&str>,
+    head: &str,
+    cancel: &AtomicBool,
+) -> Option<String> {
+    if !reviewed_prefix_in_use(prefix, count_base) {
+        return None;
+    }
+    let (prefix, base) = (prefix?, count_base?);
+    let commits = first_parent_count(repo, base, head, cancel).unwrap_or(prefix.reviewed_commits);
+    Some(reviewed_prefix_note(prefix, base, head, commits))
+}
+
 pub(crate) fn reviewed_prefix_note(prefix: &ReviewedPrefix, base: &str, head: &str, commits: usize) -> String {
     fn short(sha: &str) -> &str {
         sha.get(..8).unwrap_or(sha)

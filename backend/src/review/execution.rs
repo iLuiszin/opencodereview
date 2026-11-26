@@ -174,47 +174,31 @@ pub(crate) fn run_inner(
             crate::review::scope::can_review_incrementally(&inputs.repo_path, prior, &current_scope, cancel)
         })
         .map(|prior| prior.head_sha.as_str());
-    let reviewed_prefix = if !crate::review::should_use_reviewed_prefix(inputs) {
-        None
-    } else {
-        crate::review::scope::reviewed_prefix_or_full(
-            &inputs.repo_path,
-            &inputs.review_reviewed_branches,
-            &merge_base_sha,
-            &head_sha,
-            cancel,
-        )?
-    };
-    let reviewed_count_base = reviewed_prefix.as_ref().map(|prefix| match historical_prior_head {
-        Some(prior)
-            if prior != prefix.base_sha
-                && crate::review::is_ancestor(&inputs.repo_path, &prefix.base_sha, prior, cancel) =>
-        {
-            prior.to_string()
-        }
-        _ => prefix.base_sha.clone(),
-    });
-    let use_reviewed_prefix = match (&reviewed_prefix, &reviewed_count_base) {
-        (Some(prefix), Some(base)) => base == &prefix.base_sha,
-        _ => false,
-    };
-    let reviewed_scope_note = match (&reviewed_prefix, &reviewed_count_base) {
-        (Some(prefix), Some(base)) => {
-            let commits = crate::review::scope::first_parent_count(&inputs.repo_path, base, &head_sha, cancel)
-                .unwrap_or(prefix.reviewed_commits);
-            Some(crate::review::scope::reviewed_prefix_note(
-                prefix, base, &head_sha, commits,
-            ))
-        }
-        _ => None,
-    };
+    let count_scope = crate::review::scope::reviewed_count_scope(
+        &inputs.repo_path,
+        &inputs.review_reviewed_branches,
+        crate::review::should_use_reviewed_prefix(inputs),
+        &merge_base_sha,
+        &head_sha,
+        historical_prior_head,
+        cancel,
+    )?;
+    let reviewed_prefix = count_scope.prefix;
+    let reviewed_count_base = count_scope.count_base;
+    let use_reviewed_prefix =
+        crate::review::scope::reviewed_prefix_in_use(reviewed_prefix.as_ref(), reviewed_count_base.as_deref());
+    let reviewed_scope_note = crate::review::scope::reviewed_scope_note(
+        &inputs.repo_path,
+        reviewed_prefix.as_ref(),
+        reviewed_count_base.as_deref(),
+        &head_sha,
+        cancel,
+    );
     let full_pr_range = format!("{base_rev}...{head_sha}");
     let full_pr_changed = changed_files_local(&inputs.repo_path, &full_pr_range, cancel)?;
     let full_pr_diff = diff_local(&inputs.repo_path, &full_pr_range, cancel)?;
-    let file_limit_range = reviewed_count_base
-        .as_ref()
-        .map(|base| format!("{base}..{head_sha}"))
-        .unwrap_or_else(|| full_pr_range.clone());
+    let file_limit_range =
+        crate::review::scope::file_limit_range(&full_pr_range, reviewed_count_base.as_deref(), &head_sha);
     let reviewable_file_count =
         crate::review::reviewable_file_count_in_range(&inputs.repo_path, &file_limit_range, &full_pr_changed, cancel)?;
     let db = inputs.open_db()?;

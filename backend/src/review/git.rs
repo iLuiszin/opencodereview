@@ -42,6 +42,43 @@ pub(crate) fn fetch_pr_head(repo_path: &Path, number: i64, cancel: &AtomicBool) 
     Ok(sha)
 }
 
+/// Fetch a PR head under a unique private ref, verify it is the advertised head,
+/// and delete the ref even when verification fails. Unlike `fetch_pr_head`, this
+/// leaves no durable `refs/ocr/pr-N` review ref behind.
+pub(crate) fn fetch_pr_head_temporary(
+    repo_path: &Path,
+    number: i64,
+    expected_sha: &str,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    static NEXT_TEMP_REF: AtomicU64 = AtomicU64::new(0);
+    let reference = format!(
+        "refs/ocr/poll/pr-{number}-{}-{}",
+        std::process::id(),
+        NEXT_TEMP_REF.fetch_add(1, Ordering::Relaxed)
+    );
+    let refspec = format!("refs/pull/{number}/head:{reference}");
+    let fetched = git_capture(
+        repo_path,
+        &["fetch", "origin", &refspec, "--no-tags", "--force", "--quiet"],
+        cancel,
+        GIT_TIMEOUT_SECS,
+    )
+    .map_err(|error| format!("could not fetch PR branch via git: {error}"))
+    .and_then(|_| {
+        let sha = String::from_utf8(git_capture(repo_path, &["rev-parse", &reference], cancel, 30)?)
+            .map_err(|error| error.to_string())?
+            .trim()
+            .to_string();
+        if sha != expected_sha {
+            return Err("fetched PR head does not match GitHub's advertised head".to_string());
+        }
+        Ok(())
+    });
+    let _ = git_capture(repo_path, &["update-ref", "-d", &reference], cancel, 30);
+    fetched
+}
+
 /// Refresh the immediate base branch's remote-tracking ref before reviewing.
 /// Fetch failures propagate so stale refs cannot silently change the scope.
 pub(crate) fn fetch_base(repo_path: &Path, base_ref: &str, cancel: &AtomicBool) -> Result<(), String> {
@@ -74,10 +111,10 @@ pub(crate) fn resolve_rev_sha(repo_path: &Path, rev: &str, cancel: &AtomicBool) 
         .filter(|sha| !sha.is_empty())
 }
 
+/// Whether `rev` resolves to an object present locally. `rev-parse --verify` accepts any
+/// well-formed hex SHA without checking the object database, so it cannot answer this.
 pub(crate) fn rev_exists(repo_path: &Path, rev: &str, cancel: &AtomicBool) -> bool {
-    git_capture(repo_path, &["rev-parse", "--verify", "--quiet", rev], cancel, 15)
-        .map(|out| !String::from_utf8_lossy(&out).trim().is_empty())
-        .unwrap_or(false)
+    git_capture(repo_path, &["cat-file", "-e", rev], cancel, 15).is_ok()
 }
 
 /// The remote's default branch ("origin/main"/"origin/master"), best-effort.
