@@ -35,8 +35,7 @@ const CURSOR_CLI: &str = "/opt/cursor/bin/cursor-agent";
 const CURSOR_HOME: &str = "/scratch/session/cursor";
 const DEVIN_CLI: &str = "/opt/devin/bin/devin";
 /// The Devin CLI keeps its credentials and state under its home, owned by the model UID; the
-/// sign-in is copied in as `$XDG_DATA_HOME/devin/credentials.toml`, and again on the plain
-/// `$HOME` path for builds that ignore `XDG_DATA_HOME`.
+/// sign-in is copied in as `$XDG_DATA_HOME/devin/credentials.toml`, the only path it reads.
 const DEVIN_HOME: &str = "/scratch/session/devin";
 const PROVIDERS: &[&str] = &["claude", "codex", "opencode", "cursor", "devin"];
 
@@ -784,6 +783,13 @@ fn cursor_refreshed(auth: &str) -> Option<String> {
         .filter(|raw| raw != auth)
 }
 
+/// The one `credentials.toml` path the Devin CLI reads: under `$XDG_DATA_HOME`, which the session
+/// sets to `<home>/data`.
+#[cfg(unix)]
+pub(crate) fn devin_credentials_path(home: &Path) -> std::path::PathBuf {
+    home.join("data").join("devin").join("credentials.toml")
+}
+
 /// A Devin execution on `account` with `model`: its `credentials.toml` is copied into a home only
 /// the model UID owns. Returns the command and the sign-in it started from.
 #[cfg(unix)]
@@ -804,20 +810,16 @@ fn devin_session(account: i64, model: &str) -> Result<(Command, String), String>
         private_dir(&directory, 0o700)?;
         std::os::unix::fs::chown(&directory, Some(UID), Some(UID)).map_err(|e| e.to_string())?;
     }
-    for credentials in [
-        home.join("devin/credentials.toml"),
-        home.join(".local/share/devin/credentials.toml"),
-    ] {
-        private_dir(credentials.parent().ok_or("Missing credentials parent")?, 0o700)?;
-        std::os::unix::fs::chown(
-            credentials.parent().ok_or("Missing credentials parent")?,
-            Some(UID),
-            Some(UID),
-        )
-        .map_err(|e| e.to_string())?;
-        session_file(&credentials, &auth, 0o600, true)?;
-        std::os::unix::fs::chown(&credentials, Some(UID), Some(UID)).map_err(|e| e.to_string())?;
-    }
+    let credentials = devin_credentials_path(home);
+    private_dir(credentials.parent().ok_or("Missing credentials parent")?, 0o700)?;
+    std::os::unix::fs::chown(
+        credentials.parent().ok_or("Missing credentials parent")?,
+        Some(UID),
+        Some(UID),
+    )
+    .map_err(|e| e.to_string())?;
+    session_file(&credentials, &auth, 0o600, true)?;
+    std::os::unix::fs::chown(&credentials, Some(UID), Some(UID)).map_err(|e| e.to_string())?;
     let proxy = std::env::var("OCR_RUNNER_PROXY").unwrap_or_else(|_| "http://review-egress:8790".into());
     let mut command = Command::new(DEVIN_CLI);
     command

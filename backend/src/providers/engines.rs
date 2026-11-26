@@ -31,11 +31,11 @@ const CODEX: &[EngineModel] = &[
     model("gpt-5.6-luna", "GPT-5.6 Luna", CODEX_EFFORTS_MAX, "medium"),
     model("gpt-5.5", "GPT-5.5", CODEX_EFFORTS_XHIGH, "medium"),
 ];
-/// Devin's SWE models; effort variants are models of their own, as Cursor's are.
+/// Devin's SWE models; effort variants are models of their own, as Cursor's are. BYO-model
+/// entries that bill the Devin workspace separately (e.g. `claude-opus-5-5`) stay out.
 const DEVIN: &[EngineModel] = &[
     model("swe-high", "SWE High", &[], ""),
     model("swe-2-1-high", "SWE-2.1 High", &[], ""),
-    model("claude-opus-5-5", "Opus 5.5 (Devin)", &[], ""),
 ];
 const fn model(
     id: &'static str,

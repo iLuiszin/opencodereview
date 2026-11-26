@@ -51,10 +51,11 @@ pub(crate) fn devin_credentials_path(id: i64) -> PathBuf {
     root().join(id.to_string()).join("devin/credentials.toml")
 }
 
-/// Saves a Devin account: the `credentials.toml` of a `devin auth login` on any computer.
+/// Saves a Devin account: the `credentials.toml` of a `devin auth login` on any computer, rebuilt
+/// to hold only the API key and the fixed endpoint URLs.
 pub(crate) fn store_devin_credentials(id: i64, raw: &str) -> Result<(), String> {
-    crate::providers::devin::validate_credentials(raw)?;
-    store(&devin_credentials_path(id), id, raw.as_bytes())
+    let stored = crate::providers::devin::rebuild_credentials(raw)?;
+    store(&devin_credentials_path(id), id, stored.as_bytes())
 }
 
 /// The models a Cursor account's subscription offers (`cursor-agent models` at sign-in), kept

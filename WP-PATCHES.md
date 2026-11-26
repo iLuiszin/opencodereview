@@ -10,8 +10,10 @@ release by a nightly job that runs the backend tests before it deploys anything.
   request's head has stayed the same for that many seconds (0 to 3600; 0, the default, is off), so
   a burst of pushes is reviewed once, on its last head.
 - **A `devin` provider runs reviews on Devin SWE.** Same account model as the other providers
-  (credential `devin/credentials.toml`, pasted from a `devin auth login` in Settings → Providers;
-  model `swe-high`, no separate effort). The runner copies the credential into a private home and
+  (credential `devin/credentials.toml`, pasted from a `devin auth login` in Settings → Providers,
+  stored rebuilt to hold only the API key and the fixed endpoint URLs; models `swe-high` and
+  `swe-2-1-high`, no separate effort). The runner copies the credential into a private home at
+  `$XDG_DATA_HOME/devin/credentials.toml`, the one path the CLI reads, and
   runs `devin -p --process-model in-process --model swe-high --permission-mode dangerous
   --respect-workspace-trust false --prompt-file /work/prompt.md`, parsing the final answer with the
   lenient report contract; usage-limit and auth failures classify for failover like the other

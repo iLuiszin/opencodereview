@@ -4,11 +4,12 @@ use std::path::Path;
 
 use crate::providers::claude::Failure;
 
-/// The default model; Settings can pick others from `engines`.
-pub(crate) const MODEL: &str = "swe-high";
-
 /// `credentials.toml` written by `devin auth login`; anything larger is not a Devin credential.
 pub(crate) const MAX_CREDENTIALS_BYTES: usize = 64 * 1024;
+
+/// The endpoints a stored `credentials.toml` keeps beside the key; the CLI talks only to these.
+pub(crate) const API_SERVER_URL: &str = "https://server.codeium.com";
+pub(crate) const APP_SERVER_URL: &str = "https://api.devin.ai";
 
 /// Arguments for one non-interactive execution that reads its prompt from `prompt_file` and
 /// prints its final answer on stdout. The agent runs in this process: the runner container has no
@@ -51,56 +52,45 @@ pub(crate) fn validate_credentials(raw: &str) -> Result<(), String> {
     if raw.len() > MAX_CREDENTIALS_BYTES {
         return Err("Devin authentication is too large".into());
     }
-    if field(raw, "windsurf_api_key").is_none_or(|key| key.len() < 16) {
+    if field(raw, "windsurf_api_key").is_none_or(|key| key.len() < 16 || key.contains('"')) {
         return Err("Devin authentication has no API key; sign in again".into());
     }
     Ok(())
 }
 
-/// Credential values in a `credentials.toml` that must never appear in review output.
+/// The `credentials.toml` OpenCodeReview stores: only the API key and the fixed endpoint URLs,
+/// never the pasted text around them.
+pub(crate) fn rebuild_credentials(raw: &str) -> Result<String, String> {
+    validate_credentials(raw)?;
+    let key = field(raw, "windsurf_api_key").ok_or("Devin authentication has no API key; sign in again")?;
+    Ok(format!(
+        "windsurf_api_key = \"{key}\"\napi_server_url = \"{API_SERVER_URL}\"\napp_server_url = \"{APP_SERVER_URL}\"\n"
+    ))
+}
+
+/// Credential values in a `credentials.toml` that must never appear in review output: only the
+/// API key, so reviews that mention the endpoint URLs are not discarded.
 pub(crate) fn secrets(raw: &str) -> Vec<String> {
-    raw.lines()
-        .filter_map(|line| {
-            line.trim()
-                .split_once('=')
-                .and_then(|(key, _)| field(raw, key.trim()))
-                .filter(|secret| secret.len() >= 16)
-        })
+    field(raw, "windsurf_api_key")
+        .filter(|secret| secret.len() >= 16)
+        .into_iter()
         .collect()
 }
 
 /// Why an execution failed, read only from the CLI's own diagnostics on stderr, never from the
-/// final answer, so reviewed code that mentions "429" or a login can't trip it.
+/// final answer, so reviewed code that mentions a quota or a login can't trip it. Only the
+/// diagnostics observed from the real CLI are mapped; anything else stays [`Failure::Other`].
 pub(crate) fn classify(stdout: &str, stderr: &str) -> Failure {
     let _ = stdout;
     let lower = stderr.to_ascii_lowercase();
-    if ["usage limit", "hit your limit", "out of credits", "credit balance"]
-        .iter()
-        .any(|word| lower.contains(word))
-    {
+    if (lower.contains("quota") && lower.contains("exhausted")) || lower.contains("resource_exhausted") {
         return Failure::UsageLimit { resets_at: None };
     }
-    if [
-        "not logged in",
-        "please run devin auth login",
-        "invalid api key",
-        "invalid token",
-        "unauthorized",
-        "authentication failed",
-    ]
-    .iter()
-    .any(|word| lower.contains(word))
+    if lower.contains("login canceled")
+        || (lower.contains("unknown model")
+            && (lower.contains("model list unavailable") || lower.contains("could not fetch model configs")))
     {
         return Failure::Auth;
-    }
-    if ["429", "rate limit", "overloaded", "503"]
-        .iter()
-        .any(|word| lower.contains(word))
-    {
-        return Failure::Overloaded;
-    }
-    if lower.contains("model") && (lower.contains("not found") || lower.contains("not available")) {
-        return Failure::Model;
     }
     Failure::Other
 }
@@ -134,7 +124,7 @@ mod tests {
 
     #[test]
     fn print_args_run_one_turn_on_the_chosen_model() {
-        let args = print_args(Path::new("/work/prompt.md"), MODEL);
+        let args = print_args(Path::new("/work/prompt.md"), "swe-high");
         let args = args.iter().map(|arg| arg.to_str().unwrap()).collect::<Vec<_>>();
         assert!(args.contains(&"-p") && args.contains(&"--process-model"));
         assert!(args.windows(2).any(|pair| pair == ["--model", "swe-high"]));
@@ -149,13 +139,8 @@ mod tests {
     fn credentials_need_a_devin_api_key_and_expose_it_for_redaction() {
         let raw = "windsurf_api_key = \"fixture-api-key-value-0123456789\"\napi_server_url = \"https://server.codeium.com\"\n";
         assert!(validate_credentials(raw).is_ok());
-        assert_eq!(
-            secrets(raw),
-            vec![
-                "fixture-api-key-value-0123456789".to_string(),
-                "https://server.codeium.com".to_string()
-            ]
-        );
+        // Only the API key is secret; reviews may mention the endpoint URLs.
+        assert_eq!(secrets(raw), vec!["fixture-api-key-value-0123456789".to_string()]);
         assert!(validate_credentials("api_server_url = \"https://server.codeium.com\"\n").is_err());
         assert!(validate_credentials("windsurf_api_key = \"short\"\n").is_err());
         assert!(validate_credentials("windsurf_api_key = unquoted\n").is_err());
@@ -171,22 +156,42 @@ mod tests {
     }
 
     #[test]
+    fn stored_credentials_hold_only_the_key_and_the_fixed_urls() {
+        let raw = "windsurf_api_key = \"fixture-api-key-value-0123456789\"\napi_server_url = \"https://server.codeium.com\"\nanonymous_telemetry_id = \"2f1c\"\n";
+        let stored = rebuild_credentials(raw).unwrap();
+        assert_eq!(
+            stored,
+            format!(
+                "windsurf_api_key = \"fixture-api-key-value-0123456789\"\napi_server_url = \"{API_SERVER_URL}\"\napp_server_url = \"{APP_SERVER_URL}\"\n"
+            )
+        );
+        assert_eq!(secrets(&stored), secrets(raw));
+        assert!(validate_credentials(&stored).is_ok());
+        assert!(rebuild_credentials("api_server_url = \"https://server.codeium.com\"\n").is_err());
+    }
+
+    #[test]
     fn failures_come_from_cli_diagnostics_not_the_answer() {
-        let answer = "the report mentions 429, a usage limit and invalid api key\n";
+        let answer = "the report mentions login canceled, an exhausted quota and an unknown model\n";
         assert_eq!(classify(answer, ""), Failure::Other);
         assert_eq!(
-            classify("", "error: You've hit your usage limit for this plan"),
+            classify(
+                "",
+                "Error: Agent error: Your weekly usage quota has been exhausted. Visit https://app.devin.ai/settings/usage ... \"cognition.ai/errorKind\": \"resource_exhausted\""
+            ),
             Failure::UsageLimit { resets_at: None }
         );
         assert_eq!(
-            classify("", "devin: not logged in; run devin auth login"),
+            classify(
+                "",
+                "Error: Unknown model: 'swe-high'\nModel list unavailable (could not fetch model configs from server)"
+            ),
             Failure::Auth
         );
-        assert_eq!(
-            classify("", "request failed: 429 Too Many Requests"),
-            Failure::Overloaded
-        );
-        assert_eq!(classify("", "model swe-high not found"), Failure::Model);
+        assert_eq!(classify("", "Error: Login canceled"), Failure::Auth);
+        assert_eq!(classify("", "some other CLI failure"), Failure::Other);
+        // An unknown model without an unavailable model list is not an account failure.
+        assert_eq!(classify("", "Error: Unknown model: 'swe-high'"), Failure::Other);
     }
 
     #[test]
